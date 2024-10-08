@@ -25,6 +25,7 @@ export class HamsaVoiceAgent extends EventEmitter {
             () => this.emit('start'),
             (transcription) => this.emit('transcriptionReceived', transcription),
             (answer) => this.emit('answerReceived', answer),
+            (outcome) => this.emit("callOutcome",outcome),
             () => this.emit('speaking'),
             () => this.emit('listening'),
             () => this.emit('closed'),

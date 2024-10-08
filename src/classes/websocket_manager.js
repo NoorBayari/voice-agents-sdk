@@ -9,12 +9,13 @@ export default class WebSocketManager {
          onStart,
          onTransciprtionRecieved,
          onAnswerRecieved,
+         onCallOutcomeReceived,
          onSpeaking,
          onListening,
          onClosed,
          voiceEnablement,
          tools,
-         apiKey
+         apiKey,
     ) {
         this.url = `${url}/${conversationId}?api_key=${apiKey}`;
         this.ws = null;
@@ -28,6 +29,7 @@ export default class WebSocketManager {
         this.onStartCB = onStart;
         this.onTransciprtionRecievedCB = onTransciprtionRecieved;
         this.onAnswerRecievedCB = onAnswerRecieved;
+        this.onCallOutcomeReceivedCB = onCallOutcomeReceived
         this.onSpeakingCB = onSpeaking;
         this.onListeningCB = onListening;
         this.onClosedCB = onClosed;
@@ -82,9 +84,19 @@ export default class WebSocketManager {
             case 'tools':
                 const tools_response = this.run_tools(message.content)
                 this.ws.send(JSON.stringify({ event: 'tools_response', tools_response: tools_response,  streamSid: 'WEBSDK' }));
-                break;            
+                break;  
+            case 'outcome':
+                this.handleOutcome(message.content);
+                break;                     
             default:
                 break;
+        }
+    }
+
+
+    handleOutcome(outcomeData) {
+        if(this.onCallOutcomeReceivedCB){
+            this.onCallOutcomeReceivedCB(outcomeData)
         }
     }
 
