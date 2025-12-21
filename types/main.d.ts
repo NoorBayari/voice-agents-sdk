@@ -131,6 +131,13 @@ type JobDetails = {
     [key: string]: unknown;
 };
 /**
+ * Data object passed to callStarted event handlers
+ */
+type CallStartedData = {
+    /** Unique job/call ID for this conversation session */
+    jobId: string;
+};
+/**
  * Event handler signatures for HamsaVoiceAgent
  *
  * Defines the type-safe interface for all events emitted by the HamsaVoiceAgent.
@@ -149,13 +156,18 @@ type JobDetails = {
  *     showNetworkWarning(metrics);
  *   }
  * });
+ *
+ * agent.on('callStarted', ({ jobId }) => {
+ *   console.log('Call started with ID:', jobId);
+ *   analytics.trackCall(jobId);
+ * });
  * ```
  */
 type HamsaVoiceAgentEvents = {
     /** Emitted when connection is established (before call fully starts) */
     start: () => void;
-    /** Emitted when call is fully started and ready */
-    callStarted: () => void;
+    /** Emitted when call is fully started and ready with conversation details */
+    callStarted: (data: CallStartedData) => void;
     /** Emitted when call ends (user or agent initiated) */
     callEnded: () => void;
     /** Emitted when call is paused */
@@ -408,6 +420,40 @@ declare class HamsaVoiceAgent extends EventEmitter {
      * ```
      */
     getOutputVolume(): number;
+    /**
+     * Gets the current job/call ID for this conversation
+     *
+     * The job ID uniquely identifies this conversation session and can be used
+     * to track the conversation, retrieve analytics, or poll for completion status
+     * using the getJobDetails() method.
+     *
+     * @returns The job/call ID, or null if conversation hasn't started yet
+     *
+     * @example
+     * ```typescript
+     * // Get job ID when call starts
+     * agent.on('callStarted', () => {
+     *   const callId = agent.getJobId();
+     *   console.log('Call ID:', callId);
+     *
+     *   // Send to analytics service
+     *   analytics.trackCall(callId);
+     *
+     *   // Store for later reference
+     *   localStorage.setItem('lastCallId', callId);
+     * });
+     *
+     * // Use job ID to check completion status
+     * agent.on('callEnded', async () => {
+     *   const jobId = agent.getJobId();
+     *   if (jobId) {
+     *     const details = await agent.getJobDetails();
+     *     console.log('Call completed:', details);
+     *   }
+     * });
+     * ```
+     */
+    getJobId(): string | null;
     /**
      * Gets the current input volume level from the user's microphone
      *
@@ -1110,4 +1156,4 @@ export { HamsaVoiceAgent, HamsaApiError };
 export default HamsaVoiceAgent;
 export type { LocalTrack, RemoteParticipant, RemoteTrack, RemoteTrackPublication, Room, } from 'livekit-client';
 export type { AudioLevelsResult, CallAnalyticsResult, ConnectionStatsResult, ParticipantData, PerformanceMetricsResult, TrackStatsResult, } from './classes/livekit-manager';
-export type { HamsaVoiceAgentEvents, StartOptions, Tool, JobDetails };
+export type { CallStartedData, HamsaVoiceAgentEvents, StartOptions, Tool, JobDetails, };
