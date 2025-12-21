@@ -39,8 +39,8 @@ Then, you can initialize the agent like this:
 ```javascript
 const agent = new HamsaVoiceAgent("YOUR_API_KEY");
 
-agent.on("callStarted", () => {
-  console.log("Conversation has started!");
+agent.on("callStarted", ({ jobId }) => {
+  console.log("Conversation has started! Job ID:", jobId);
 });
 
 // Example: Start a call
@@ -423,6 +423,70 @@ agent.start({
 });
 ```
 
+## Job/Call ID Tracking
+
+Track and reference conversations using unique job IDs. The SDK provides two ways to access the job/call ID:
+
+### Getting Job ID from Events (Recommended)
+
+The `callStarted` event includes the job ID in its data object:
+
+```javascript
+agent.on("callStarted", ({ jobId }) => {
+  console.log("Call started with ID:", jobId);
+
+  // Send to analytics service
+  analytics.trackCall(jobId);
+
+  // Store for later reference
+  localStorage.setItem("lastCallId", jobId);
+});
+```
+
+### Getting Job ID with Getter Method
+
+Access the job ID anytime after the call has started:
+
+```javascript
+// Get current job ID
+const jobId = agent.getJobId();
+
+if (jobId) {
+  console.log("Current call ID:", jobId);
+} else {
+  console.log("No active call");
+}
+
+// Use in other events
+agent.on("transcriptionReceived", (text) => {
+  const jobId = agent.getJobId();
+  saveTranscript(jobId, text);
+});
+
+// Check completion status later
+agent.on("callEnded", async () => {
+  const jobId = agent.getJobId();
+  if (jobId) {
+    const details = await agent.getJobDetails();
+    console.log("Call completed:", details);
+  }
+});
+```
+
+### TypeScript Support
+
+```typescript
+import { CallStartedData } from '@hamsa-ai/voice-agents-sdk';
+
+// Event-based (with destructuring)
+agent.on("callStarted", ({ jobId }: CallStartedData) => {
+  console.log("Job ID:", jobId); // string
+});
+
+// Getter-based
+const jobId: string | null = agent.getJobId();
+```
+
 ## Events
 
 During the conversation, the SDK emits events to update your application about the conversation status.
@@ -430,8 +494,8 @@ During the conversation, the SDK emits events to update your application about t
 ### Conversation Status Events
 
 ```javascript
-agent.on("callStarted", () => {
-  console.log("Conversation has started!");
+agent.on("callStarted", ({ jobId }) => {
+  console.log("Conversation has started with ID:", jobId);
 });
 agent.on("callEnded", () => {
   console.log("Conversation has ended!");
@@ -788,6 +852,7 @@ import {
   AudioCaptureOptions,
   AudioCaptureMetadata,
   CallAnalyticsResult,
+  CallStartedData,
   ParticipantData,
   CustomEventMetadata,
 } from "@hamsa-ai/voice-agents-sdk";
@@ -802,6 +867,9 @@ const performance = agent.getPerformanceMetrics(); // PerformanceMetricsResult |
 const participants = agent.getParticipants(); // ParticipantData[]
 const trackStats = agent.getTrackStats(); // TrackStatsResult | null
 const analytics = agent.getCallAnalytics(); // CallAnalyticsResult | null
+
+// Job ID access
+const jobId = agent.getJobId(); // string | null
 
 // Advanced audio control methods
 const outputVolume = agent.getOutputVolume(); // number
@@ -844,6 +912,11 @@ await agent.start({
 });
 
 // Strongly typed event handlers
+agent.on("callStarted", ({ jobId }: CallStartedData) => {
+  console.log("Job ID:", jobId); // string
+  // Track conversation start
+});
+
 agent.on("analyticsUpdated", (analytics: CallAnalyticsResult) => {
   console.log(analytics.connectionStats.quality); // string
   console.log(analytics.audioMetrics.userAudioLevel); // number
