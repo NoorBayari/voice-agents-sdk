@@ -165,7 +165,7 @@ export default class LiveKitManager extends EventEmitter {
       source: 'LiveKitManager',
       error: { toolsCount: tools.length },
     });
-    this.toolRegistry = new LiveKitToolRegistry(tools);
+    this.toolRegistry = new LiveKitToolRegistry(tools, debug);
 
     if (tools.length > 0) {
       this.logger.log('Registered client-side tools', {
@@ -1023,12 +1023,34 @@ export default class LiveKitManager extends EventEmitter {
 
     // === Tool and Data Events ===
     // Forward agent communication events for conversation tracking
-    this.toolRegistry.on('answerReceived', (answer) =>
-      this.emit('answerReceived', answer)
-    );
-    this.toolRegistry.on('transcriptionReceived', (transcription) =>
-      this.emit('transcriptionReceived', transcription)
-    );
+    this.toolRegistry.on('answerReceived', (answer) => {
+      const TEXT_PREVIEW_LENGTH = 100;
+      this.logger.log('🔄 Forwarding answerReceived to external listeners', {
+        source: 'LiveKitManager',
+        error: {
+          answerPreview: answer.substring(0, TEXT_PREVIEW_LENGTH),
+          answerLength: answer.length,
+        },
+      });
+      this.emit('answerReceived', answer);
+    });
+    this.toolRegistry.on('transcriptionReceived', (transcription) => {
+      const TEXT_PREVIEW_LENGTH = 100;
+      this.logger.log(
+        '🔄 Forwarding transcriptionReceived to external listeners',
+        {
+          source: 'LiveKitManager',
+          error: {
+            transcriptionPreview: transcription.substring(
+              0,
+              TEXT_PREVIEW_LENGTH
+            ),
+            transcriptionLength: transcription.length,
+          },
+        }
+      );
+      this.emit('transcriptionReceived', transcription);
+    });
 
     // Forward custom agent events for application-specific logic
     this.toolRegistry.on('customEvent', (eventType, eventData, metadata) =>
@@ -1128,11 +1150,12 @@ export default class LiveKitManager extends EventEmitter {
       [
         RoomEvent.DataReceived,
         (payload: Uint8Array, participant?: RemoteParticipant) => {
-          this.logger.log('Data received from participant', {
+          this.logger.log('🔔 RoomEvent.DataReceived triggered', {
             source: 'LiveKitManager',
             error: {
               payloadSize: payload.length,
               participantIdentity: participant?.identity || 'unknown',
+              participantSid: participant?.sid,
             },
           });
 
@@ -1142,9 +1165,30 @@ export default class LiveKitManager extends EventEmitter {
       ],
       [
         RoomEvent.TranscriptionReceived,
-        (transcriptions: Array<{ text?: string; final?: boolean }>) => {
-          // Delegate transcription processing to tool registry
-          this.toolRegistry.handleTranscriptionReceived(transcriptions);
+        (
+          transcriptions: Array<{ text?: string; final?: boolean }>,
+          participant?: Participant
+        ) => {
+          const SEGMENT_PREVIEW_LENGTH = 50;
+          this.logger.log('🔔 RoomEvent.TranscriptionReceived triggered', {
+            source: 'LiveKitManager',
+            error: {
+              participantIdentity: participant?.identity || 'unknown',
+              participantSid: participant?.sid,
+              isLocal: participant?.isLocal,
+              segmentCount: transcriptions.length,
+              segments: transcriptions.map((s) => ({
+                text: s.text?.substring(0, SEGMENT_PREVIEW_LENGTH),
+                final: s.final,
+              })),
+            },
+          });
+
+          // Delegate transcription processing to tool registry with participant info
+          this.toolRegistry.handleTranscriptionReceived(
+            transcriptions,
+            participant?.identity
+          );
         },
       ],
       [

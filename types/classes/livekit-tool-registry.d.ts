@@ -191,6 +191,8 @@ export declare class LiveKitToolRegistry extends EventEmitter {
     private room;
     /** Array of client-side tools available for agent execution */
     private tools;
+    /** Debug logger instance for conditional logging */
+    private readonly logger;
     /**
      * Creates a new LiveKitToolRegistry instance
      *
@@ -199,6 +201,7 @@ export declare class LiveKitToolRegistry extends EventEmitter {
      * added later using setTools() or updated dynamically based on context.
      *
      * @param tools - Initial array of tools to register (optional)
+     * @param debug - Enable debug logging for troubleshooting (optional)
      *
      * @example
      * ```typescript
@@ -216,7 +219,7 @@ export declare class LiveKitToolRegistry extends EventEmitter {
      * registry.setRoom(liveKitRoom);
      * ```
      */
-    constructor(tools?: Tool[]);
+    constructor(tools?: Tool[], debug?: boolean);
     /**
      * Configures the LiveKit room for tool registration and RPC setup
      *
@@ -388,48 +391,42 @@ export declare class LiveKitToolRegistry extends EventEmitter {
      * Processes real-time transcription data from LiveKit's speech-to-text system
      *
      * Handles transcription segments received from LiveKit's built-in speech recognition,
-     * extracting text content and emitting structured transcription events. This method
-     * processes both partial and final transcription segments, enabling real-time
-     * speech-to-text display and conversation logging.
+     * extracting text content and routing to the appropriate event based on the participant.
+     * This method intelligently differentiates between agent and user speech:
+     *
+     * - **Agent speech** → Emits `answerReceived` event
+     * - **User speech** → Emits `transcriptionReceived` event
+     *
+     * The participant is identified by checking if their identity contains "agent".
      *
      * @param transcriptions - Array of transcription segments from LiveKit
      * @param transcriptions[].text - Transcribed text content
      * @param transcriptions[].final - Whether this is a final transcription segment
+     * @param participantIdentity - Identity of the participant who spoke (optional)
      *
-     * @fires transcriptionReceived When valid text content is extracted
+     * @fires answerReceived When agent speech is transcribed
+     * @fires transcriptionReceived When user speech is transcribed
      *
      * @example
      * ```typescript
      * // This method is called automatically by LiveKitManager
      * // when RoomEvent.TranscriptionReceived is triggered
      *
-     * // Listen for transcription updates
+     * // Listen for USER transcriptions
      * registry.on('transcriptionReceived', (text) => {
-     *   console.log('Transcription:', text);
-     *
-     *   // Update real-time transcript display
-     *   updateTranscriptDisplay(text);
-     *
-     *   // Log conversation for analytics
-     *   conversationLogger.logUserSpeech(text, Date.now());
-     *
-     *   // Trigger intent recognition
-     *   if (text.length > 10) {
-     *     intentRecognizer.analyze(text);
-     *   }
+     *   console.log('USER said:', text);
+     *   updateUserMessage(text);
      * });
      *
-     * // Handle transcription processing
-     * let transcriptBuffer = '';
-     * registry.on('transcriptionReceived', (text) => {
-     *   transcriptBuffer += text + ' ';
-     *
-     *   // Process complete sentences
-     *   if (text.endsWith('.') || text.endsWith('?') || text.endsWith('!')) {
-     *     processCompleteSentence(transcriptBuffer.trim());
-     *     transcriptBuffer = '';
-     *   }
+     * // Listen for AGENT responses
+     * registry.on('answerReceived', (text) => {
+     *   console.log('AGENT said:', text);
+     *   updateAgentMessage(text);
      * });
+     *
+     * // The routing happens automatically based on participant identity:
+     * // - If participant.identity includes "agent" → answerReceived
+     * // - Otherwise → transcriptionReceived
      * ```
      *
      * LiveKit Transcription Format:
@@ -444,7 +441,7 @@ export declare class LiveKitToolRegistry extends EventEmitter {
     handleTranscriptionReceived(transcriptions: Array<{
         text?: string;
         final?: boolean;
-    }>): void;
+    }>, participantIdentity?: string): void;
     /**
      * Returns the count of currently registered tools
      *
