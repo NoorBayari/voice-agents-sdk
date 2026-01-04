@@ -35,6 +35,7 @@
 import { EventEmitter } from 'events';
 import type {
   ConnectionQuality,
+  LocalTrack,
   LocalTrackPublication,
   Participant,
   RemoteParticipant,
@@ -42,7 +43,7 @@ import type {
   RemoteTrackPublication,
   Room,
 } from 'livekit-client';
-import { RoomEvent } from 'livekit-client';
+import { RoomEvent, Track } from 'livekit-client';
 import { createDebugLogger, type DebugLogger } from '../utils';
 import { LiveKitAnalytics } from './livekit-analytics';
 import { LiveKitAudioManager } from './livekit-audio-manager';
@@ -146,6 +147,7 @@ export default class LiveKitManager extends EventEmitter {
     });
 
     // Initialize specialized modules with their specific responsibilities
+
     this.logger.log('Creating LiveKitConnection module', {
       source: 'LiveKitManager',
     });
@@ -154,12 +156,12 @@ export default class LiveKitManager extends EventEmitter {
     this.logger.log('Creating LiveKitAnalytics module', {
       source: 'LiveKitManager',
     });
-    this.analytics = new LiveKitAnalytics();
+    this.analytics = new LiveKitAnalytics(debug);
 
     this.logger.log('Creating LiveKitAudioManager module', {
       source: 'LiveKitManager',
     });
-    this.audioManager = new LiveKitAudioManager();
+    this.audioManager = new LiveKitAudioManager(debug);
 
     this.logger.log('Creating LiveKitToolRegistry module', {
       source: 'LiveKitManager',
@@ -1254,6 +1256,39 @@ export default class LiveKitManager extends EventEmitter {
             publication,
             track: publication.track,
           });
+
+          // Delegate local audio track processing to audio manager
+          if (
+            publication.kind === Track.Kind.Audio &&
+            publication.track instanceof Track
+          ) {
+            this.audioManager.handleLocalTrackPublished(
+              publication.track as LocalTrack,
+              publication,
+              room.localParticipant
+            );
+          }
+        },
+      ],
+      [
+        RoomEvent.LocalTrackUnpublished,
+        (publication: LocalTrackPublication) => {
+          this.logger.log('Local track unpublished', {
+            source: 'LiveKitManager',
+            error: {
+              trackSid: publication.trackSid,
+              trackKind: publication.kind,
+            },
+          });
+
+          // Delegate local audio track cleanup to audio manager
+          if (publication.kind === Track.Kind.Audio && publication.track) {
+            this.audioManager.handleLocalTrackUnsubscribed(
+              publication.track as LocalTrack, // LocalTrack inherits from Track/RemoteTrack in terms of cleanup needs
+              publication,
+              room.localParticipant
+            );
+          }
         },
       ],
     ];

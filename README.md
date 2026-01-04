@@ -278,7 +278,7 @@ agent.disableAudioCapture();
 
 #### Audio Capture Formats
 
-The SDK supports three audio formats:
+The SDK supports three high-quality audio formats:
 
 1. **`opus-webm`** (default, recommended)
    - Efficient Opus codec in WebM container
@@ -288,14 +288,14 @@ The SDK supports three audio formats:
 
 2. **`pcm-f32`**
    - Raw PCM audio as Float32Array
-   - Values range from -1.0 to 1.0
+   - Values range from -1.0 to 1.0 (16kHz mono)
    - Best for audio analysis or DSP
    - `audioData` is a `Float32Array`
 
 3. **`pcm-i16`**
    - Raw PCM audio as Int16Array
    - Values range from -32768 to 32767
-   - Best for compatibility with audio APIs
+   - Best for compatibility with legacy audio APIs
    - `audioData` is an `Int16Array`
 
 #### Common Use Cases
