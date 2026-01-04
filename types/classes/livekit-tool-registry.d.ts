@@ -187,6 +187,10 @@ import type { Tool } from './types';
  * agent responses, transcriptions, and custom events from voice agents.
  */
 export declare class LiveKitToolRegistry extends EventEmitter {
+    /** Maximum length for text preview in debug logs */
+    private static readonly TEXT_PREVIEW_LENGTH;
+    /** Maximum length for decoded payload preview in debug logs */
+    private static readonly PAYLOAD_PREVIEW_LENGTH;
     /** Reference to the LiveKit room for RPC method registration */
     private room;
     /** Array of client-side tools available for agent execution */
