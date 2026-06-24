@@ -25,6 +25,7 @@ import type {
   ConnectionQualityData,
   DTMFDigit,
   LiveKitTokenPayload,
+  ReceivedMessage,
   TrackSubscriptionData,
   TrackUnsubscriptionData,
 } from './classes/types';
@@ -42,6 +43,8 @@ export type {
   AudioCaptureOptions,
   AudioCaptureSource,
   DTMFDigit,
+  MessageRole,
+  ReceivedMessage,
 } from './classes/types';
 
 /**
@@ -76,6 +79,15 @@ const REGION_CONFIG = {
     LIVEKIT_URL: 'wss://rtc.uae.tryhamsa.com',
   },
 } as const;
+
+/**
+ * LiveKit text-stream topic used for chat messages.
+ *
+ * This is the well-known topic the LiveKit Agents framework registers its text
+ * input handler on, so user messages must be published here for the agent to
+ * receive them. See {@link HamsaVoiceAgent.sendMessage}.
+ */
+const LIVEKIT_CHAT_TOPIC = 'lk.chat';
 
 /**
  * Configuration options for the HamsaVoiceAgent constructor
@@ -121,6 +133,12 @@ type StartOptions = {
   params?: Record<string, unknown>;
   /** Whether to enable voice interactions. If false, agent runs in text-only mode */
   voiceEnablement?: boolean;
+  /**
+   * Whether the conversation runs in chat-only mode (no audio media).
+   * When true, the SDK requests a chat-only session from the backend via the
+   * participant-token and conversation-init endpoints.
+   */
+  isChatOnly?: boolean;
   /** Array of client-side tools that the agent can call during conversations */
   tools?: Tool[];
   /** Optional user identifier for tracking and analytics */
@@ -296,6 +314,13 @@ type HamsaVoiceAgentEvents = {
   transcriptionReceived: (text: string) => void;
   /** Emitted when agent response is received */
   answerReceived: (text: string) => void;
+  /**
+   * Emitted for every conversation message (agent reply or user transcription)
+   * with structured, streaming-aware metadata (id, role, isFinal, timestamp).
+   * Use this to drive a chat UI; prefer it over the plain-string
+   * `answerReceived`/`transcriptionReceived` events when rendering message bubbles.
+   */
+  messageReceived: (message: ReceivedMessage) => void;
   /** Emitted when agent starts speaking */
   speaking: () => void;
   /** Emitted when agent is listening */
@@ -304,6 +329,8 @@ type HamsaVoiceAgentEvents = {
   agentStateChanged: (state: AgentState) => void;
   /** Emitted when a DTMF digit is successfully sent */
   dtmfSent: (digit: DTMFDigit) => void;
+  /** Emitted when a chat message is successfully sent to the agent */
+  messageSent: (text: string) => void;
 
   // Error events
   /** Emitted when an error occurs */
@@ -892,6 +919,82 @@ class HamsaVoiceAgent extends EventEmitter {
   }
 
   /**
+   * Sends a text chat message to the agent
+   *
+   * Publishes the user's typed message to the agent over LiveKit's text-stream
+   * channel ({@link LIVEKIT_CHAT_TOPIC}). Use this to drive a text/chat UI,
+   * typically alongside a chat-only session started with `start({ isChatOnly: true })`.
+   *
+   * The agent's reply arrives asynchronously through the `answerReceived` event.
+   * This method does not return the reply.
+   *
+   * @param text - The message to send. Must be a non-empty string.
+   * @throws {Error} If called when not connected (no active session)
+   * @throws {Error} If `text` is empty or not a string
+   * @fires messageSent When the message is successfully sent to the agent
+   *
+   * @example
+   * ```typescript
+   * await agent.start({ agentId: 'support_agent', isChatOnly: true });
+   *
+   * // Render the agent's replies
+   * agent.on('answerReceived', (reply) => appendToChat('agent', reply));
+   *
+   * // Send the user's typed message
+   * sendButton.onclick = async () => {
+   *   const text = input.value;
+   *   appendToChat('user', text);
+   *   await agent.sendMessage(text);
+   * };
+   * ```
+   */
+  async sendMessage(text: string): Promise<void> {
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      throw new Error('Cannot send message: text must be a non-empty string.');
+    }
+
+    const room = this.liveKitManager?.connection?.room;
+    if (!(this.liveKitManager?.isConnected && room?.localParticipant)) {
+      throw new Error(
+        'Cannot send message: not connected to agent. Call start() first.'
+      );
+    }
+
+    const TEXT_PREVIEW_LENGTH = 50;
+    this.logger.log('Sending chat message', {
+      source: 'HamsaVoiceAgent',
+      error: {
+        length: text.length,
+        preview: text.substring(0, TEXT_PREVIEW_LENGTH),
+        topic: LIVEKIT_CHAT_TOPIC,
+      },
+    });
+
+    try {
+      await room.localParticipant.sendText(text, {
+        topic: LIVEKIT_CHAT_TOPIC,
+      });
+    } catch (error) {
+      this.logger.error('Failed to send chat message', {
+        source: 'HamsaVoiceAgent',
+        error,
+      });
+      this.emit(
+        'error',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      throw error;
+    }
+
+    this.logger.log('Chat message sent successfully', {
+      source: 'HamsaVoiceAgent',
+    });
+
+    // Emit event to notify listeners (e.g. for optimistic UI / local echo)
+    this.emit('messageSent', text);
+  }
+
+  /**
    * Gets frequency data from the user's microphone input
    *
    * Returns frequency domain data for audio visualization and analysis.
@@ -1160,6 +1263,7 @@ class HamsaVoiceAgent extends EventEmitter {
     agentId,
     params = {},
     voiceEnablement = false,
+    isChatOnly = false,
     tools = [],
     userId: _userId,
     preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices = false,
@@ -1188,12 +1292,13 @@ class HamsaVoiceAgent extends EventEmitter {
         },
       });
 
-      const accessToken = await this.#initializeLiveKitConversation(
-        agentId,
+      const accessToken = await this.#initializeLiveKitConversation({
+        voiceAgentId: agentId,
         params,
         voiceEnablement,
-        tools
-      );
+        tools,
+        isChatOnly,
+      });
 
       // Create LiveKitManager instance
       this.logger.log('Creating LiveKitManager instance', {
@@ -1278,6 +1383,9 @@ class HamsaVoiceAgent extends EventEmitter {
             },
           });
           this.emit('answerReceived', answer);
+        })
+        .on('messageReceived', (message) => {
+          this.emit('messageReceived', message);
         })
         .on('speaking', () => {
           this.logger.log('Agent started speaking', {
@@ -1819,12 +1927,15 @@ class HamsaVoiceAgent extends EventEmitter {
    * @param tools - Array of tools/functions to be used.
    * @returns The LiveKit access token or null if failed.
    */
-  async #initializeLiveKitConversation(
-    voiceAgentId: string,
-    params: Record<string, unknown>,
-    voiceEnablement: boolean,
-    tools: Tool[]
-  ): Promise<string> {
+  async #initializeLiveKitConversation(options: {
+    voiceAgentId: string;
+    params: Record<string, unknown>;
+    voiceEnablement: boolean;
+    tools: Tool[];
+    isChatOnly: boolean;
+  }): Promise<string> {
+    const { voiceAgentId, params, voiceEnablement, tools, isChatOnly } =
+      options;
     const headers = {
       Authorization: `Token ${this.apiKey}`,
       'Content-Type': 'application/json',
@@ -1834,7 +1945,8 @@ class HamsaVoiceAgent extends EventEmitter {
     const tokenData = await this.#fetchParticipantToken(
       voiceAgentId,
       params,
-      headers
+      headers,
+      isChatOnly
     );
     const liveKitAccessToken = tokenData.liveKitAccessToken;
     const jobIdFromToken = this.#resolveJobIdFromToken(
@@ -1852,6 +1964,7 @@ class HamsaVoiceAgent extends EventEmitter {
       headers,
       jobIdFromToken,
       tokenData,
+      isChatOnly,
     });
 
     // Store resolved jobId for downstream job lookups
@@ -1896,7 +2009,8 @@ class HamsaVoiceAgent extends EventEmitter {
   async #fetchParticipantToken(
     voiceAgentId: string,
     params: Record<string, unknown>,
-    headers: Record<string, string>
+    headers: Record<string, string>,
+    isChatOnly: boolean
   ): Promise<{ liveKitAccessToken: string; jobId?: string }> {
     this.logger.log('Fetching participant token from API', {
       source: 'HamsaVoiceAgent',
@@ -1913,7 +2027,7 @@ class HamsaVoiceAgent extends EventEmitter {
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ voiceAgentId, params }),
+        body: JSON.stringify({ voiceAgentId, params, isChatOnly }),
       }
     );
 
@@ -1975,6 +2089,7 @@ class HamsaVoiceAgent extends EventEmitter {
     headers: Record<string, string>;
     jobIdFromToken: string | null;
     tokenData: { jobId?: string };
+    isChatOnly: boolean;
   }): Promise<void> {
     const {
       voiceAgentId,
@@ -1984,6 +2099,7 @@ class HamsaVoiceAgent extends EventEmitter {
       headers,
       jobIdFromToken,
       tokenData,
+      isChatOnly,
     } = options;
     const llmtools =
       tools?.length > 0 ? this.#convertToolsToLLMTools(tools) : [];
@@ -1996,6 +2112,7 @@ class HamsaVoiceAgent extends EventEmitter {
       // Backend expects jobId derived from the token metadata when available
       jobId: jobIdFromToken ?? tokenData.jobId ?? voiceAgentId,
       channelType: 'Web',
+      isChatOnly,
     };
 
     this.logger.log('Initializing conversation with API', {
@@ -2006,6 +2123,7 @@ class HamsaVoiceAgent extends EventEmitter {
         voiceEnablement,
         jobId: conversationBody.jobId,
         channelType: conversationBody.channelType,
+        isChatOnly,
       },
     });
 

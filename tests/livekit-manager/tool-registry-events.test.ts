@@ -112,4 +112,92 @@ describe('LiveKitManager - Tool Registry Events', () => {
     // Should be called with argument AND the raw data object
     expect(mockTool.fn).toHaveBeenCalledWith('val1', rpcData);
   });
+
+  describe('messageReceived event', () => {
+    test('should emit a structured agent message with id and isFinal', () => {
+      const { liveKitManager } = context;
+      const messageSpy = jest.fn();
+      liveKitManager.on('messageReceived', messageSpy);
+
+      liveKitManager.toolRegistry.handleTranscriptionReceived(
+        [{ id: 'seg-1', text: 'Hello there', final: true }],
+        'agent-123'
+      );
+
+      expect(messageSpy).toHaveBeenCalledTimes(1);
+      expect(messageSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'seg-1',
+          role: 'agent',
+          text: 'Hello there',
+          isFinal: true,
+        })
+      );
+      expect(messageSpy.mock.calls[0][0].timestamp).toEqual(expect.any(Number));
+    });
+
+    test('should mark user transcriptions with role "user"', () => {
+      const { liveKitManager } = context;
+      const messageSpy = jest.fn();
+      liveKitManager.on('messageReceived', messageSpy);
+
+      liveKitManager.toolRegistry.handleTranscriptionReceived(
+        [{ id: 'seg-2', text: 'My order number', final: false }],
+        'user-789'
+      );
+
+      expect(messageSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'seg-2',
+          role: 'user',
+          isFinal: false,
+        })
+      );
+    });
+
+    test('should keep a stable id across streaming partials of one message', () => {
+      const { liveKitManager } = context;
+      const ids: string[] = [];
+      liveKitManager.on('messageReceived', (m) => ids.push(m.id));
+
+      liveKitManager.toolRegistry.handleTranscriptionReceived(
+        [{ id: 'seg-3', text: 'Hel', final: false }],
+        'agent-1'
+      );
+      liveKitManager.toolRegistry.handleTranscriptionReceived(
+        [{ id: 'seg-3', text: 'Hello', final: true }],
+        'agent-1'
+      );
+
+      expect(ids).toEqual(['seg-3', 'seg-3']);
+    });
+
+    test('should synthesize an id when the segment has none', () => {
+      const { liveKitManager } = context;
+      const messageSpy = jest.fn();
+      liveKitManager.on('messageReceived', messageSpy);
+
+      liveKitManager.toolRegistry.handleTranscriptionReceived(
+        [{ text: 'No id here', final: true }],
+        'agent-1'
+      );
+
+      const message = messageSpy.mock.calls[0][0];
+      expect(typeof message.id).toBe('string');
+      expect(message.id.length).toBeGreaterThan(0);
+    });
+
+    test('should still emit the legacy answerReceived event', () => {
+      const { liveKitManager } = context;
+      const answerSpy = jest.fn();
+      liveKitManager.on('answerReceived', answerSpy);
+
+      liveKitManager.toolRegistry.handleTranscriptionReceived(
+        [{ id: 'seg-4', text: 'Backward compatible', final: true }],
+        'agent-1'
+      );
+
+      expect(answerSpy).toHaveBeenCalledWith('Backward compatible');
+    });
+  });
 });

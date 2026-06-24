@@ -2,11 +2,11 @@ import { EventEmitter } from 'events';
 import type { ConnectionState, LocalTrack, LocalTrackPublication, Participant, RemoteParticipant, RemoteTrack, Room } from 'livekit-client';
 import LiveKitManager, { type AgentState, type AudioLevelsResult, type CallAnalyticsResult, type ConnectionStatsResult, type ParticipantData, type PerformanceMetricsResult, type TrackStatsResult } from './classes/livekit-manager';
 import ScreenWakeLock from './classes/screen-wake-lock';
-import type { AudioCaptureCallback, AudioCaptureOptions, ConnectionQualityData, DTMFDigit, TrackSubscriptionData, TrackUnsubscriptionData } from './classes/types';
+import type { AudioCaptureCallback, AudioCaptureOptions, ConnectionQualityData, DTMFDigit, ReceivedMessage, TrackSubscriptionData, TrackUnsubscriptionData } from './classes/types';
 export type { RpcInvocationData } from 'livekit-client';
 export { RpcError } from 'livekit-client';
 export type { AgentState } from './classes/livekit-manager';
-export type { AudioCaptureCallback, AudioCaptureFormat, AudioCaptureMetadata, AudioCaptureOptions, AudioCaptureSource, DTMFDigit, } from './classes/types';
+export type { AudioCaptureCallback, AudioCaptureFormat, AudioCaptureMetadata, AudioCaptureOptions, AudioCaptureSource, DTMFDigit, MessageRole, ReceivedMessage, } from './classes/types';
 /**
  * Custom error class that includes both human-readable message and machine-readable messageKey
  * for internationalization and programmatic error handling
@@ -63,6 +63,12 @@ type StartOptions = {
     params?: Record<string, unknown>;
     /** Whether to enable voice interactions. If false, agent runs in text-only mode */
     voiceEnablement?: boolean;
+    /**
+     * Whether the conversation runs in chat-only mode (no audio media).
+     * When true, the SDK requests a chat-only session from the backend via the
+     * participant-token and conversation-init endpoints.
+     */
+    isChatOnly?: boolean;
     /** Array of client-side tools that the agent can call during conversations */
     tools?: Tool[];
     /** Optional user identifier for tracking and analytics */
@@ -205,6 +211,13 @@ type HamsaVoiceAgentEvents = {
     transcriptionReceived: (text: string) => void;
     /** Emitted when agent response is received */
     answerReceived: (text: string) => void;
+    /**
+     * Emitted for every conversation message (agent reply or user transcription)
+     * with structured, streaming-aware metadata (id, role, isFinal, timestamp).
+     * Use this to drive a chat UI; prefer it over the plain-string
+     * `answerReceived`/`transcriptionReceived` events when rendering message bubbles.
+     */
+    messageReceived: (message: ReceivedMessage) => void;
     /** Emitted when agent starts speaking */
     speaking: () => void;
     /** Emitted when agent is listening */
@@ -213,6 +226,8 @@ type HamsaVoiceAgentEvents = {
     agentStateChanged: (state: AgentState) => void;
     /** Emitted when a DTMF digit is successfully sent */
     dtmfSent: (digit: DTMFDigit) => void;
+    /** Emitted when a chat message is successfully sent to the agent */
+    messageSent: (text: string) => void;
     /** Emitted when an error occurs */
     error: (error: Error | HamsaApiError) => void;
     /** Emitted when a remote track is subscribed */
@@ -648,6 +663,37 @@ declare class HamsaVoiceAgent extends EventEmitter {
      */
     sendDTMF(digit: DTMFDigit): void;
     /**
+     * Sends a text chat message to the agent
+     *
+     * Publishes the user's typed message to the agent over LiveKit's text-stream
+     * channel ({@link LIVEKIT_CHAT_TOPIC}). Use this to drive a text/chat UI,
+     * typically alongside a chat-only session started with `start({ isChatOnly: true })`.
+     *
+     * The agent's reply arrives asynchronously through the `answerReceived` event.
+     * This method does not return the reply.
+     *
+     * @param text - The message to send. Must be a non-empty string.
+     * @throws {Error} If called when not connected (no active session)
+     * @throws {Error} If `text` is empty or not a string
+     * @fires messageSent When the message is successfully sent to the agent
+     *
+     * @example
+     * ```typescript
+     * await agent.start({ agentId: 'support_agent', isChatOnly: true });
+     *
+     * // Render the agent's replies
+     * agent.on('answerReceived', (reply) => appendToChat('agent', reply));
+     *
+     * // Send the user's typed message
+     * sendButton.onclick = async () => {
+     *   const text = input.value;
+     *   appendToChat('user', text);
+     *   await agent.sendMessage(text);
+     * };
+     * ```
+     */
+    sendMessage(text: string): Promise<void>;
+    /**
      * Gets frequency data from the user's microphone input
      *
      * Returns frequency domain data for audio visualization and analysis.
@@ -890,7 +936,7 @@ declare class HamsaVoiceAgent extends EventEmitter {
      * await agent.start({ agentId: 'my_agent', voiceEnablement: true });
      * ```
      */
-    start({ agentId, params, voiceEnablement, tools, userId: _userId, preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices, connectionDelay: _connectionDelay, disableWakeLock: _disableWakeLock, onAudioData, captureAudio, avatarContainerSelector, }: StartOptions): Promise<void>;
+    start({ agentId, params, voiceEnablement, isChatOnly, tools, userId: _userId, preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices, connectionDelay: _connectionDelay, disableWakeLock: _disableWakeLock, onAudioData, captureAudio, avatarContainerSelector, }: StartOptions): Promise<void>;
     /**
      * Terminates the current voice agent conversation
      *
