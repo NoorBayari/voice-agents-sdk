@@ -138,7 +138,12 @@ export default class LiveKitManager extends EventEmitter {
     {
       debug = false,
       avatarContainerSelector,
-    }: { debug?: boolean; avatarContainerSelector?: string } = {}
+      isChatOnly = false,
+    }: {
+      debug?: boolean;
+      avatarContainerSelector?: string;
+      isChatOnly?: boolean;
+    } = {}
   ) {
     super();
 
@@ -162,7 +167,12 @@ export default class LiveKitManager extends EventEmitter {
     this.logger.log('Creating LiveKitConnection module', {
       source: 'LiveKitManager',
     });
-    this.connection = new LiveKitConnection(lkUrl, accessToken, debug);
+    this.connection = new LiveKitConnection(
+      lkUrl,
+      accessToken,
+      debug,
+      isChatOnly
+    );
 
     this.logger.log('Creating LiveKitAnalytics module', {
       source: 'LiveKitManager',

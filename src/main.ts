@@ -1314,7 +1314,7 @@ class HamsaVoiceAgent extends EventEmitter {
         this.LIVEKIT_URL,
         accessToken,
         tools,
-        { debug: this.debug, avatarContainerSelector }
+        { debug: this.debug, avatarContainerSelector, isChatOnly }
       );
 
       this.logger.log('LiveKitManager created, setting up event listeners', {
