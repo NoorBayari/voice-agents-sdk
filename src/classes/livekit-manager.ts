@@ -1058,6 +1058,9 @@ export default class LiveKitManager extends EventEmitter {
       );
       this.emit('transcriptionReceived', transcription);
     });
+    this.toolRegistry.on('messageReceived', (message) =>
+      this.emit('messageReceived', message)
+    );
 
     // Forward custom agent events for application-specific logic
     this.toolRegistry.on('customEvent', (eventType, eventData, metadata) =>
@@ -1187,7 +1190,11 @@ export default class LiveKitManager extends EventEmitter {
       [
         RoomEvent.TranscriptionReceived,
         (
-          transcriptions: Array<{ text?: string; final?: boolean }>,
+          transcriptions: Array<{
+            id?: string;
+            text?: string;
+            final?: boolean;
+          }>,
           participant?: Participant
         ) => {
           const SEGMENT_PREVIEW_LENGTH = 50;

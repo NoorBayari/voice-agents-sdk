@@ -181,7 +181,7 @@
 import { EventEmitter } from 'events';
 import type { Room, RpcInvocationData } from 'livekit-client';
 import { createDebugLogger, type DebugLogger } from '../utils';
-import type { Tool } from './types';
+import type { MessageRole, ReceivedMessage, Tool } from './types';
 
 /**
  * LiveKitToolRegistry class for client-side tool management and RPC handling
@@ -206,6 +206,9 @@ export class LiveKitToolRegistry extends EventEmitter {
 
   /** Debug logger instance for conditional logging */
   private readonly logger: DebugLogger;
+
+  /** Monotonic counter for synthesizing message ids when a segment lacks one */
+  private fallbackMessageIdCounter = 0;
 
   /**
    * Creates a new LiveKitToolRegistry instance
@@ -644,7 +647,7 @@ export class LiveKitToolRegistry extends EventEmitter {
    * ```
    */
   handleTranscriptionReceived(
-    transcriptions: Array<{ text?: string; final?: boolean }>,
+    transcriptions: Array<{ id?: string; text?: string; final?: boolean }>,
     participantIdentity?: string
   ): void {
     try {
@@ -675,7 +678,8 @@ export class LiveKitToolRegistry extends EventEmitter {
       });
 
       // LiveKit transcriptions come as an array of segments
-      // Each segment has properties like text, final, etc.
+      // Each segment has properties like id, text, final, etc.
+      const role = isAgent ? 'agent' : 'user';
       for (const segment of transcriptions) {
         if (segment.text) {
           if (isAgent) {
@@ -712,6 +716,14 @@ export class LiveKitToolRegistry extends EventEmitter {
             );
             this.emit('transcriptionReceived', segment.text);
           }
+
+          // Also emit the structured, streaming-aware message for chat UIs.
+          this.emitMessageReceived({
+            id: segment.id,
+            role,
+            text: segment.text,
+            isFinal: segment.final ?? false,
+          });
         }
       }
     } catch (error) {
@@ -725,6 +737,45 @@ export class LiveKitToolRegistry extends EventEmitter {
       });
       // Ignore transcription processing errors
     }
+  }
+
+  /**
+   * Emits a structured, streaming-aware `messageReceived` event.
+   *
+   * Synthesizes a stable id when the source segment lacks one so consumers can
+   * still key the message, and stamps the observation time.
+   */
+  private emitMessageReceived(message: {
+    id?: string;
+    role: MessageRole;
+    text: string;
+    isFinal: boolean;
+  }): void {
+    let id = message.id;
+    if (!id) {
+      this.fallbackMessageIdCounter += 1;
+      id = `msg-${this.fallbackMessageIdCounter}`;
+    }
+
+    const payload: ReceivedMessage = {
+      id,
+      role: message.role,
+      text: message.text,
+      isFinal: message.isFinal,
+      timestamp: Date.now(),
+    };
+
+    this.logger.log('✅ Emitting messageReceived event', {
+      source: 'LiveKitToolRegistry',
+      error: {
+        id: payload.id,
+        role: payload.role,
+        isFinal: payload.isFinal,
+        textLength: payload.text.length,
+      },
+    });
+
+    this.emit('messageReceived', payload);
   }
 
   /**

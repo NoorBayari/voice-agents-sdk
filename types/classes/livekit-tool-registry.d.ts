@@ -199,6 +199,8 @@ export declare class LiveKitToolRegistry extends EventEmitter {
     private readonly registeredMethods;
     /** Debug logger instance for conditional logging */
     private readonly logger;
+    /** Monotonic counter for synthesizing message ids when a segment lacks one */
+    private fallbackMessageIdCounter;
     /**
      * Creates a new LiveKitToolRegistry instance
      *
@@ -463,9 +465,17 @@ export declare class LiveKitToolRegistry extends EventEmitter {
      * ```
      */
     handleTranscriptionReceived(transcriptions: Array<{
+        id?: string;
         text?: string;
         final?: boolean;
     }>, participantIdentity?: string): void;
+    /**
+     * Emits a structured, streaming-aware `messageReceived` event.
+     *
+     * Synthesizes a stable id when the source segment lacks one so consumers can
+     * still key the message, and stamps the observation time.
+     */
+    private emitMessageReceived;
     /**
      * Returns the count of currently registered tools
      *
