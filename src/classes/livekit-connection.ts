@@ -158,10 +158,10 @@
  * - Includes fallback mechanisms for connection reliability
  */
 
-import type { DataPacket_Kind } from '@livekit/protocol';
 import { EventEmitter } from 'events';
 import {
   type ConnectionState,
+  type DataChannelKind,
   type Participant,
   type RemoteParticipant,
   Room,
@@ -886,7 +886,7 @@ export class LiveKitConnection extends EventEmitter {
    * Handles DataChannel buffer status changes
    * This is critical for debugging DataChannel errors
    */
-  #handleDCBufferStatusChanged(isLow: boolean, kind: DataPacket_Kind): void {
+  #handleDCBufferStatusChanged(isLow: boolean, kind: DataChannelKind): void {
     this.logger.log('DataChannel buffer status changed', {
       source: 'LiveKitConnection',
       error: {
