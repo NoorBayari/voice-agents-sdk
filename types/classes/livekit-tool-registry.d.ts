@@ -181,6 +181,15 @@ import { EventEmitter } from 'events';
 import type { Room } from 'livekit-client';
 import type { Tool } from './types';
 /**
+ * LiveKit text-stream topic used for chat messages.
+ *
+ * Both directions use this topic: the SDK publishes user messages here via
+ * `sendText`, and the agent publishes its replies here as text streams. The
+ * registry registers a handler on this topic to surface inbound agent messages
+ * as `messageReceived` events.
+ */
+export declare const LIVEKIT_CHAT_TOPIC = "lk.chat";
+/**
  * LiveKitToolRegistry class for client-side tool management and RPC handling
  *
  * Extends EventEmitter to provide real-time notifications for tool registration,
@@ -201,6 +210,8 @@ export declare class LiveKitToolRegistry extends EventEmitter {
     private readonly logger;
     /** Monotonic counter for synthesizing message ids when a segment lacks one */
     private fallbackMessageIdCounter;
+    /** Whether the chat text-stream handler is currently registered on the room */
+    private chatStreamRegistered;
     /**
      * Creates a new LiveKitToolRegistry instance
      *
@@ -256,6 +267,20 @@ export declare class LiveKitToolRegistry extends EventEmitter {
      * ```
      */
     setRoom(room: Room | null): void;
+    /**
+     * Registers a text-stream handler on {@link LIVEKIT_CHAT_TOPIC} to receive the
+     * agent's chat replies.
+     *
+     * The agent publishes its responses as LiveKit text streams on this topic.
+     * Each stream's chunks are concatenated and emitted via `messageReceived`,
+     * streaming partials (`isFinal: false`) followed by a final message
+     * (`isFinal: true`). The stream id is reused as the message id so a chat UI
+     * can update the same bubble in place.
+     *
+     * Guarded so it registers at most once per room — `registerTextStreamHandler`
+     * throws if a handler already exists for the topic.
+     */
+    private registerChatStreamHandler;
     /**
      * Updates the available tools and re-registers them with the room
      *

@@ -200,4 +200,60 @@ describe('LiveKitManager - Tool Registry Events', () => {
       expect(answerSpy).toHaveBeenCalledWith('Backward compatible');
     });
   });
+
+  describe('inbound chat text stream (lk.chat)', () => {
+    // Sync generator under asyncIterator is fine: `for await` awaits each
+    // yielded value. Avoids an async fn with no await (biome useAwait).
+    const makeTextReader = (chunks: string[], id: string) => ({
+      info: { id },
+      *[Symbol.asyncIterator]() {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      },
+    });
+
+    test('registers a text-stream handler on lk.chat when the room is set', () => {
+      const { mockRoom } = context;
+      expect(mockRoom.registerTextStreamHandler).toHaveBeenCalledWith(
+        'lk.chat',
+        expect.any(Function)
+      );
+    });
+
+    test('emits streaming partials then a final agent message', async () => {
+      const { liveKitManager, mockRoom } = context;
+      const handler = mockRoom.registerTextStreamHandler.mock.calls[0][1];
+      const received: Record<string, unknown>[] = [];
+      liveKitManager.on('messageReceived', (m) => received.push(m));
+
+      await handler(makeTextReader(['Hel', 'lo'], 'stream-1'), {
+        identity: 'agent-1',
+      });
+
+      expect(
+        received.map((m) => ({
+          id: m.id,
+          role: m.role,
+          text: m.text,
+          isFinal: m.isFinal,
+        }))
+      ).toEqual([
+        { id: 'stream-1', role: 'agent', text: 'Hel', isFinal: false },
+        { id: 'stream-1', role: 'agent', text: 'Hello', isFinal: false },
+        { id: 'stream-1', role: 'agent', text: 'Hello', isFinal: true },
+      ]);
+    });
+
+    test('labels a stream from the local participant as the user role', async () => {
+      const { liveKitManager, mockRoom } = context;
+      const handler = mockRoom.registerTextStreamHandler.mock.calls[0][1];
+      const received: Record<string, unknown>[] = [];
+      liveKitManager.on('messageReceived', (m) => received.push(m));
+
+      await handler(makeTextReader(['hi'], 's2'), { identity: 'local-user' });
+
+      expect(received.at(-1)?.role).toBe('user');
+    });
+  });
 });

@@ -18,6 +18,7 @@ import LiveKitManager, {
   type PerformanceMetricsResult,
   type TrackStatsResult,
 } from './classes/livekit-manager';
+import { LIVEKIT_CHAT_TOPIC } from './classes/livekit-tool-registry';
 import ScreenWakeLock from './classes/screen-wake-lock';
 import type {
   AudioCaptureCallback,
@@ -79,15 +80,6 @@ const REGION_CONFIG = {
     LIVEKIT_URL: 'wss://rtc.uae.tryhamsa.com',
   },
 } as const;
-
-/**
- * LiveKit text-stream topic used for chat messages.
- *
- * This is the well-known topic the LiveKit Agents framework registers its text
- * input handler on, so user messages must be published here for the agent to
- * receive them. See {@link HamsaVoiceAgent.sendMessage}.
- */
-const LIVEKIT_CHAT_TOPIC = 'lk.chat';
 
 /**
  * Configuration options for the HamsaVoiceAgent constructor

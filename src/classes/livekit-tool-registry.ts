@@ -184,6 +184,16 @@ import { createDebugLogger, type DebugLogger } from '../utils';
 import type { MessageRole, ReceivedMessage, Tool } from './types';
 
 /**
+ * LiveKit text-stream topic used for chat messages.
+ *
+ * Both directions use this topic: the SDK publishes user messages here via
+ * `sendText`, and the agent publishes its replies here as text streams. The
+ * registry registers a handler on this topic to surface inbound agent messages
+ * as `messageReceived` events.
+ */
+export const LIVEKIT_CHAT_TOPIC = 'lk.chat';
+
+/**
  * LiveKitToolRegistry class for client-side tool management and RPC handling
  *
  * Extends EventEmitter to provide real-time notifications for tool registration,
@@ -209,6 +219,9 @@ export class LiveKitToolRegistry extends EventEmitter {
 
   /** Monotonic counter for synthesizing message ids when a segment lacks one */
   private fallbackMessageIdCounter = 0;
+
+  /** Whether the chat text-stream handler is currently registered on the room */
+  private chatStreamRegistered = false;
 
   /**
    * Creates a new LiveKitToolRegistry instance
@@ -275,6 +288,62 @@ export class LiveKitToolRegistry extends EventEmitter {
     // Register tools when room is available
     if (room && this.tools.length > 0) {
       this.registerTools();
+    }
+
+    // Register the inbound chat text-stream handler so agent replies on
+    // LIVEKIT_CHAT_TOPIC are surfaced as messageReceived events.
+    if (room) {
+      this.registerChatStreamHandler(room);
+    }
+  }
+
+  /**
+   * Registers a text-stream handler on {@link LIVEKIT_CHAT_TOPIC} to receive the
+   * agent's chat replies.
+   *
+   * The agent publishes its responses as LiveKit text streams on this topic.
+   * Each stream's chunks are concatenated and emitted via `messageReceived`,
+   * streaming partials (`isFinal: false`) followed by a final message
+   * (`isFinal: true`). The stream id is reused as the message id so a chat UI
+   * can update the same bubble in place.
+   *
+   * Guarded so it registers at most once per room — `registerTextStreamHandler`
+   * throws if a handler already exists for the topic.
+   */
+  private registerChatStreamHandler(room: Room): void {
+    if (this.chatStreamRegistered) {
+      return;
+    }
+
+    try {
+      room.registerTextStreamHandler(
+        LIVEKIT_CHAT_TOPIC,
+        async (reader, participantInfo) => {
+          const localIdentity = room.localParticipant?.identity;
+          const role: MessageRole =
+            participantInfo.identity === localIdentity ? 'user' : 'agent';
+          const id = reader.info.id;
+
+          let text = '';
+          // Sequential by nature: each chunk extends the message; emit a
+          // streaming partial as it arrives, then a final once the stream ends.
+          for await (const chunk of reader) {
+            text += chunk;
+            this.emitMessageReceived({ id, role, text, isFinal: false });
+          }
+          this.emitMessageReceived({ id, role, text, isFinal: true });
+        }
+      );
+      this.chatStreamRegistered = true;
+      this.logger.log('Registered chat text-stream handler', {
+        source: 'LiveKitToolRegistry',
+        error: { topic: LIVEKIT_CHAT_TOPIC },
+      });
+    } catch (error) {
+      this.logger.error('Failed to register chat text-stream handler', {
+        source: 'LiveKitToolRegistry',
+        error,
+      });
     }
   }
 
@@ -878,7 +947,18 @@ export class LiveKitToolRegistry extends EventEmitter {
    * ```
    */
   cleanup(): void {
-    // Tools are automatically unregistered when room disconnects
-    // No additional cleanup needed
+    // Tools are automatically unregistered when room disconnects.
+    // Unregister the chat text-stream handler so a fresh session can re-register.
+    if (this.chatStreamRegistered) {
+      try {
+        this.room?.unregisterTextStreamHandler(LIVEKIT_CHAT_TOPIC);
+      } catch (error) {
+        this.logger.error('Failed to unregister chat text-stream handler', {
+          source: 'LiveKitToolRegistry',
+          error,
+        });
+      }
+      this.chatStreamRegistered = false;
+    }
   }
 }
