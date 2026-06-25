@@ -2103,7 +2103,10 @@ class HamsaVoiceAgent extends EventEmitter {
       params,
       // Backend expects jobId derived from the token metadata when available
       jobId: jobIdFromToken ?? tokenData.jobId ?? voiceAgentId,
-      channelType: 'Web',
+      // Chat-only sessions must be tagged as a chat channel so the backend agent
+      // runs in chat mode (publishes replies on `lk.chat`) and the conversation
+      // is recorded under the Chat channel rather than Web.
+      channelType: isChatOnly ? 'Chat Agent' : 'Web',
       isChatOnly,
     };
 
