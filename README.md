@@ -141,10 +141,11 @@ agent.end();
 | `end()` | End the chat session. |
 
 > **Note:** Use `chatMessageReceived` for chat UIs — it is dedicated to chat and
-> deterministic. The generic `messageReceived` event also fires for chat, but it
-> is dual-sourced (it additionally fires for voice transcriptions). In a
-> chat-only session the voice events (`answerReceived`, `transcriptionReceived`)
-> and audio events do not fire — the conversation lives entirely on the chat channel.
+> deterministic. It surfaces the agent's text in chat-only sessions regardless of
+> the underlying delivery channel. The generic `messageReceived` event also fires
+> for chat, but it is dual-sourced (it additionally fires for voice
+> transcriptions), so prefer `chatMessageReceived`. In a chat-only session the
+> voice events (`answerReceived`, `transcriptionReceived`) and audio events do not fire.
 
 ## Advanced Audio Controls
 
