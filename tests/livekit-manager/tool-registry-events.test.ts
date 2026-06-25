@@ -4,6 +4,8 @@
 
 import { beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { RpcError } from 'livekit-client';
+import { LiveKitToolRegistry } from '../../src/classes/livekit-tool-registry';
+import { createMockRoom } from '../utils/livekit-mocks';
 import { setupTest, type TestContext } from './shared-setup';
 
 describe('LiveKitManager - Tool Registry Events', () => {
@@ -292,6 +294,66 @@ describe('LiveKitManager - Tool Registry Events', () => {
       // Transcription still drives messageReceived, but never the chat event.
       expect(messageSpy).toHaveBeenCalled();
       expect(chatSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('chat-only lk.transcription text stream', () => {
+    const makeTextReader = (chunks: string[], id: string) => ({
+      info: { id },
+      *[Symbol.asyncIterator]() {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      },
+    });
+
+    const registeredTopics = (room: ReturnType<typeof createMockRoom>) =>
+      room.registerTextStreamHandler.mock.calls.map((c) => c[0]);
+
+    test('chat-only registers handlers on both lk.chat and lk.transcription', () => {
+      const room = createMockRoom();
+      const registry = new LiveKitToolRegistry([], false, true);
+      registry.setRoom(room as never);
+
+      expect(registeredTopics(room)).toEqual(
+        expect.arrayContaining(['lk.chat', 'lk.transcription'])
+      );
+    });
+
+    test('voice session does NOT register the lk.transcription handler', () => {
+      const room = createMockRoom();
+      const registry = new LiveKitToolRegistry([], false, false);
+      registry.setRoom(room as never);
+
+      const topics = registeredTopics(room);
+      expect(topics).toContain('lk.chat');
+      expect(topics).not.toContain('lk.transcription');
+    });
+
+    test('emits chatMessageReceived from the lk.transcription stream', async () => {
+      const room = createMockRoom();
+      const registry = new LiveKitToolRegistry([], false, true);
+      const chatMessages: Record<string, unknown>[] = [];
+      registry.on('chatMessageReceived', (m) => chatMessages.push(m));
+      registry.setRoom(room as never);
+
+      const call = room.registerTextStreamHandler.mock.calls.find(
+        (c) => c[0] === 'lk.transcription'
+      );
+      const handler = call?.[1] as (
+        reader: unknown,
+        info: { identity: string }
+      ) => Promise<void>;
+      await handler(makeTextReader(['Hi ', 'there'], 't1'), {
+        identity: 'agent-x',
+      });
+
+      expect(chatMessages.at(-1)).toMatchObject({
+        id: 't1',
+        role: 'agent',
+        text: 'Hi there',
+        isFinal: true,
+      });
     });
   });
 });

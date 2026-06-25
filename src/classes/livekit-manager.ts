@@ -188,7 +188,7 @@ export default class LiveKitManager extends EventEmitter {
       source: 'LiveKitManager',
       error: { toolsCount: tools.length },
     });
-    this.toolRegistry = new LiveKitToolRegistry(tools, debug);
+    this.toolRegistry = new LiveKitToolRegistry(tools, debug, isChatOnly);
 
     if (tools.length > 0) {
       this.logger.log('Registered client-side tools', {

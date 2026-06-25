@@ -190,6 +190,17 @@ import type { Tool } from './types';
  */
 export declare const LIVEKIT_CHAT_TOPIC = "lk.chat";
 /**
+ * LiveKit text-stream topic the agent uses for transcription/response text.
+ *
+ * In chat-only sessions there is no audio subscription, so the normal
+ * `RoomEvent.TranscriptionReceived` event never fires — but the agent still
+ * publishes its text on this topic as a data-stream. The registry registers a
+ * text-stream handler here (chat-only) so those messages surface as
+ * `chatMessageReceived`. Voice sessions keep using `RoomEvent.TranscriptionReceived`
+ * and do NOT register this handler (it would double-emit).
+ */
+export declare const LIVEKIT_TRANSCRIPTION_TOPIC = "lk.transcription";
+/**
  * LiveKitToolRegistry class for client-side tool management and RPC handling
  *
  * Extends EventEmitter to provide real-time notifications for tool registration,
@@ -210,8 +221,10 @@ export declare class LiveKitToolRegistry extends EventEmitter {
     private readonly logger;
     /** Monotonic counter for synthesizing message ids when a segment lacks one */
     private fallbackMessageIdCounter;
-    /** Whether the chat text-stream handler is currently registered on the room */
-    private chatStreamRegistered;
+    /** Whether the session is text/chat-only (gates the lk.transcription handler) */
+    private readonly isChatOnly;
+    /** Topics whose chat text-stream handler is currently registered on the room */
+    private readonly registeredChatTopics;
     /**
      * Creates a new LiveKitToolRegistry instance
      *
@@ -238,7 +251,7 @@ export declare class LiveKitToolRegistry extends EventEmitter {
      * registry.setRoom(liveKitRoom);
      * ```
      */
-    constructor(tools?: Tool[], debug?: boolean);
+    constructor(tools?: Tool[], debug?: boolean, isChatOnly?: boolean);
     /**
      * Configures the LiveKit room for tool registration and RPC setup
      *
@@ -268,19 +281,29 @@ export declare class LiveKitToolRegistry extends EventEmitter {
      */
     setRoom(room: Room | null): void;
     /**
-     * Registers a text-stream handler on {@link LIVEKIT_CHAT_TOPIC} to receive the
-     * agent's chat replies.
+     * Registers text-stream handlers to receive the agent's chat replies.
      *
-     * The agent publishes its responses as LiveKit text streams on this topic.
-     * Each stream's chunks are concatenated and emitted via `messageReceived`,
+     * The agent publishes its responses as LiveKit text streams. This registers a
+     * handler on {@link LIVEKIT_CHAT_TOPIC}, and — for chat-only sessions —
+     * additionally on {@link LIVEKIT_TRANSCRIPTION_TOPIC}, because chat-only never
+     * subscribes to audio and so never receives `RoomEvent.TranscriptionReceived`.
+     * Voice sessions skip the transcription topic (it would double-emit alongside
+     * the existing `RoomEvent.TranscriptionReceived` path).
+     *
+     * Each stream's chunks are concatenated and emitted via `chatMessageReceived`,
      * streaming partials (`isFinal: false`) followed by a final message
      * (`isFinal: true`). The stream id is reused as the message id so a chat UI
      * can update the same bubble in place.
      *
-     * Guarded so it registers at most once per room — `registerTextStreamHandler`
-     * throws if a handler already exists for the topic.
+     * Guarded per topic — `registerTextStreamHandler` throws if a handler already
+     * exists for the topic.
      */
     private registerChatStreamHandler;
+    /**
+     * Builds a text-stream handler that concatenates streamed chunks and emits
+     * them as `chatMessageReceived` (streaming partials then a final message).
+     */
+    private createChatStreamHandler;
     /**
      * Updates the available tools and re-registers them with the room
      *
