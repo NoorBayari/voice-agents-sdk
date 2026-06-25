@@ -329,9 +329,9 @@ export class LiveKitToolRegistry extends EventEmitter {
           // streaming partial as it arrives, then a final once the stream ends.
           for await (const chunk of reader) {
             text += chunk;
-            this.emitMessageReceived({ id, role, text, isFinal: false });
+            this.emitChatMessage({ id, role, text, isFinal: false });
           }
-          this.emitMessageReceived({ id, role, text, isFinal: true });
+          this.emitChatMessage({ id, role, text, isFinal: true });
         }
       );
       this.chatStreamRegistered = true;
@@ -814,25 +814,34 @@ export class LiveKitToolRegistry extends EventEmitter {
    * Synthesizes a stable id when the source segment lacks one so consumers can
    * still key the message, and stamps the observation time.
    */
-  private emitMessageReceived(message: {
+  private buildReceivedMessage(message: {
     id?: string;
     role: MessageRole;
     text: string;
     isFinal: boolean;
-  }): void {
+  }): ReceivedMessage {
     let id = message.id;
     if (!id) {
       this.fallbackMessageIdCounter += 1;
       id = `msg-${this.fallbackMessageIdCounter}`;
     }
 
-    const payload: ReceivedMessage = {
+    return {
       id,
       role: message.role,
       text: message.text,
       isFinal: message.isFinal,
       timestamp: Date.now(),
     };
+  }
+
+  private emitMessageReceived(message: {
+    id?: string;
+    role: MessageRole;
+    text: string;
+    isFinal: boolean;
+  }): void {
+    const payload = this.buildReceivedMessage(message);
 
     this.logger.log('✅ Emitting messageReceived event', {
       source: 'LiveKitToolRegistry',
@@ -844,6 +853,37 @@ export class LiveKitToolRegistry extends EventEmitter {
       },
     });
 
+    this.emit('messageReceived', payload);
+  }
+
+  /**
+   * Emits a chat message originating from the {@link LIVEKIT_CHAT_TOPIC} stream.
+   *
+   * Fires the dedicated `chatMessageReceived` event — which fires only for real
+   * chat messages, never voice transcriptions — and, for backward
+   * compatibility, the generic `messageReceived` event with the same payload.
+   */
+  private emitChatMessage(message: {
+    id?: string;
+    role: MessageRole;
+    text: string;
+    isFinal: boolean;
+  }): void {
+    const payload = this.buildReceivedMessage(message);
+
+    this.logger.log('✅ Emitting chatMessageReceived event', {
+      source: 'LiveKitToolRegistry',
+      error: {
+        id: payload.id,
+        role: payload.role,
+        isFinal: payload.isFinal,
+        textLength: payload.text.length,
+      },
+    });
+
+    // Dedicated chat event (chat-only, deterministic for chat integrators)…
+    this.emit('chatMessageReceived', payload);
+    // …and the generic event, kept for backward compatibility.
     this.emit('messageReceived', payload);
   }
 

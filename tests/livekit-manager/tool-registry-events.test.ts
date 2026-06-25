@@ -255,5 +255,43 @@ describe('LiveKitManager - Tool Registry Events', () => {
 
       expect(received.at(-1)?.role).toBe('user');
     });
+
+    test('emits the dedicated chatMessageReceived event for chat streams', async () => {
+      const { liveKitManager, mockRoom } = context;
+      const handler = mockRoom.registerTextStreamHandler.mock.calls[0][1];
+      const chatMessages: Record<string, unknown>[] = [];
+      liveKitManager.on('chatMessageReceived', (m) => chatMessages.push(m));
+
+      await handler(makeTextReader(['Hel', 'lo'], 'stream-1'), {
+        identity: 'agent-1',
+      });
+
+      expect(
+        chatMessages.map((m) => ({ text: m.text, isFinal: m.isFinal }))
+      ).toEqual([
+        { text: 'Hel', isFinal: false },
+        { text: 'Hello', isFinal: false },
+        { text: 'Hello', isFinal: true },
+      ]);
+      expect(chatMessages.at(-1)?.id).toBe('stream-1');
+      expect(chatMessages.at(-1)?.role).toBe('agent');
+    });
+
+    test('does NOT emit chatMessageReceived for voice transcriptions', () => {
+      const { liveKitManager } = context;
+      const chatSpy = jest.fn();
+      const messageSpy = jest.fn();
+      liveKitManager.on('chatMessageReceived', chatSpy);
+      liveKitManager.on('messageReceived', messageSpy);
+
+      liveKitManager.toolRegistry.handleTranscriptionReceived(
+        [{ id: 'seg-1', text: 'spoken words', final: true }],
+        'agent-1'
+      );
+
+      // Transcription still drives messageReceived, but never the chat event.
+      expect(messageSpy).toHaveBeenCalled();
+      expect(chatSpy).not.toHaveBeenCalled();
+    });
   });
 });

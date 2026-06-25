@@ -500,7 +500,16 @@ export declare class LiveKitToolRegistry extends EventEmitter {
      * Synthesizes a stable id when the source segment lacks one so consumers can
      * still key the message, and stamps the observation time.
      */
+    private buildReceivedMessage;
     private emitMessageReceived;
+    /**
+     * Emits a chat message originating from the {@link LIVEKIT_CHAT_TOPIC} stream.
+     *
+     * Fires the dedicated `chatMessageReceived` event — which fires only for real
+     * chat messages, never voice transcriptions — and, for backward
+     * compatibility, the generic `messageReceived` event with the same payload.
+     */
+    private emitChatMessage;
     /**
      * Returns the count of currently registered tools
      *

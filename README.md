@@ -95,6 +95,57 @@ To end a conversation, simply call the "end" function:
 agent.end();
 ```
 
+## Chat (Text) Conversations
+
+The SDK supports text-only chat sessions in addition to voice. In chat mode the
+SDK connects to the agent without requesting microphone access, sends the user's
+typed messages to the agent, and surfaces the agent's replies (including the
+greeting) as they stream in.
+
+Start a chat-only session by passing `isChatOnly: true` to `start()`:
+
+```javascript
+const agent = new HamsaVoiceAgent(API_KEY);
+
+// Receive the agent's chat replies (streaming-aware)
+agent.on('chatMessageReceived', (message) => {
+  // message: { id, role: 'user' | 'agent', text, isFinal, timestamp }
+  // The same `id` is reused across streaming updates of one message, so you can
+  // update the same bubble in place; `isFinal` is false for partials, true when complete.
+  renderMessage(message);
+});
+
+// Optional: typing indicator while the agent composes a reply
+agent.on('agentStateChanged', (state) => {
+  setTyping(state === 'thinking' || state === 'speaking');
+});
+
+// Start the chat-only session
+await agent.start({ agentId: 'YOUR_AGENT_ID', isChatOnly: true });
+
+// Send the user's typed message (published on the chat channel)
+await agent.sendMessage('Hello, I need help with my order.');
+
+// End the session when done
+agent.end();
+```
+
+### Chat surface
+
+| API | Purpose |
+| --- | --- |
+| `start({ isChatOnly: true })` | Begin a text-only session (no microphone prompt). |
+| `sendMessage(text)` | Send the user's message to the agent. Emits `messageSent`. |
+| `chatMessageReceived` event | Agent chat replies + greeting, with `{ id, role, text, isFinal, timestamp }`. Fires **only** for chat — never for voice transcriptions. |
+| `agentStateChanged` event | Drive a typing indicator (`thinking` / `speaking`). |
+| `end()` | End the chat session. |
+
+> **Note:** Use `chatMessageReceived` for chat UIs — it is dedicated to chat and
+> deterministic. The generic `messageReceived` event also fires for chat, but it
+> is dual-sourced (it additionally fires for voice transcriptions). In a
+> chat-only session the voice events (`answerReceived`, `transcriptionReceived`)
+> and audio events do not fire — the conversation lives entirely on the chat channel.
+
 ## Advanced Audio Controls
 
 The SDK provides comprehensive audio control features for professional voice applications:
@@ -533,6 +584,10 @@ agent.on("transcriptionReceived", (text) => {
 });
 agent.on("answerReceived", (text) => {
   console.log("Agent answer received", text);
+});
+// Chat-only sessions: dedicated chat event (see "Chat (Text) Conversations")
+agent.on("chatMessageReceived", (message) => {
+  console.log("Chat message received", message); // { id, role, text, isFinal, timestamp }
 });
 ```
 

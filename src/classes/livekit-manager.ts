@@ -1071,6 +1071,9 @@ export default class LiveKitManager extends EventEmitter {
     this.toolRegistry.on('messageReceived', (message) =>
       this.emit('messageReceived', message)
     );
+    this.toolRegistry.on('chatMessageReceived', (message) =>
+      this.emit('chatMessageReceived', message)
+    );
 
     // Forward custom agent events for application-specific logic
     this.toolRegistry.on('customEvent', (eventType, eventData, metadata) =>

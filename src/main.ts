@@ -311,8 +311,23 @@ type HamsaVoiceAgentEvents = {
    * with structured, streaming-aware metadata (id, role, isFinal, timestamp).
    * Use this to drive a chat UI; prefer it over the plain-string
    * `answerReceived`/`transcriptionReceived` events when rendering message bubbles.
+   *
+   * Note: this is dual-sourced (chat text streams AND voice transcriptions).
+   * For a chat-only integration, prefer {@link chatMessageReceived}.
    */
   messageReceived: (message: ReceivedMessage) => void;
+  /**
+   * Emitted only for chat messages received on the chat text-stream channel
+   * (`lk.chat`) — agent replies and the greeting in chat-only sessions.
+   * Same `ReceivedMessage` shape (stable id for in-place updates, streaming
+   * partials with `isFinal: false` followed by a final `isFinal: true`).
+   *
+   * Unlike {@link messageReceived}, this never fires for voice transcriptions,
+   * so it is the deterministic event for chat UIs. Pair with `agentStateChanged`
+   * for a typing indicator. In chat-only sessions, `answerReceived`,
+   * `transcriptionReceived`, and audio events do not fire.
+   */
+  chatMessageReceived: (message: ReceivedMessage) => void;
   /** Emitted when agent starts speaking */
   speaking: () => void;
   /** Emitted when agent is listening */
@@ -1378,6 +1393,9 @@ class HamsaVoiceAgent extends EventEmitter {
         })
         .on('messageReceived', (message) => {
           this.emit('messageReceived', message);
+        })
+        .on('chatMessageReceived', (message) => {
+          this.emit('chatMessageReceived', message);
         })
         .on('speaking', () => {
           this.logger.log('Agent started speaking', {
