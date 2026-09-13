@@ -466,3 +466,71 @@ describe('StartOptions - New Parameters', () => {
     });
   });
 });
+
+describe('versionRef Parameter', () => {
+  let voiceAgent: HamsaVoiceAgent;
+
+  /** Bodies posted to the two endpoints that resolve the agent. */
+  const postedBodies = () =>
+    (global.fetch as any).mock.calls.map(([, init]: [string, RequestInit]) =>
+      JSON.parse(String(init.body))
+    );
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    voiceAgent = new HamsaVoiceAgent('test-api-key');
+
+    (global.fetch as any).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { liveKitAccessToken: 'mock-token', jobId: 'job-123' },
+        }),
+    });
+  });
+
+  test('sends nothing on the wire when it is not given', async () => {
+    // The safety property. Every caller that exists today omits this, so their
+    // requests have to stay byte-identical: a backend that rejects unknown
+    // fields must not start seeing one.
+    await voiceAgent.start({ agentId: 'test-agent' });
+
+    for (const body of postedBodies()) {
+      expect(body).not.toHaveProperty('versionRef');
+    }
+  });
+
+  test('forwards a published version id to both endpoints', async () => {
+    await voiceAgent.start({ agentId: 'test-agent', versionRef: 'ver_abc123' });
+
+    const bodies = postedBodies();
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) {
+      expect(body.versionRef).toBe('ver_abc123');
+    }
+  });
+
+  test('forwards the latest and draft sentinels unchanged', async () => {
+    for (const ref of ['latest', 'draft']) {
+      jest.clearAllMocks();
+      await voiceAgent.start({ agentId: 'test-agent', versionRef: ref });
+
+      for (const body of postedBodies()) {
+        expect(body.versionRef).toBe(ref);
+      }
+    }
+  });
+
+  test('leaves the rest of the body alone', async () => {
+    await voiceAgent.start({
+      agentId: 'test-agent',
+      versionRef: 'latest',
+      params: { userName: 'Sara' },
+    });
+
+    const [tokenBody] = postedBodies();
+    expect(tokenBody.voiceAgentId).toBe('test-agent');
+    expect(tokenBody.params).toEqual({ userName: 'Sara' });
+  });
+});
