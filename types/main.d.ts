@@ -56,6 +56,20 @@ type StartOptions = {
     /** Unique identifier of the voice agent to start (from Hamsa dashboard) */
     agentId: string;
     /**
+     * Which version of the agent this conversation should run.
+     *
+     * A published version id, `"latest"` for whatever is currently live, or
+     * `"draft"` for the unpublished working copy. Omit it and the backend
+     * behaves exactly as it always has, which is why nothing is sent on the wire
+     * unless a caller asks for it.
+     *
+     * An environment is saved with each version, so naming the version is enough:
+     * the runtime resolves variables from whatever that version carries. There is
+     * deliberately no separate environment option, which would let a call
+     * disagree with its own version.
+     */
+    versionRef?: string;
+    /**
      * Optional parameters to pass to the agent for conversation customization
      * These can be referenced in agent prompts using {{parameter_name}} syntax
      * @example { userName: "John", orderNumber: "12345", userTier: "premium" }
@@ -951,7 +965,7 @@ declare class HamsaVoiceAgent extends EventEmitter {
      * await agent.start({ agentId: 'my_agent', voiceEnablement: true });
      * ```
      */
-    start({ agentId, params, voiceEnablement, isChatOnly, tools, userId: _userId, preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices, connectionDelay: _connectionDelay, disableWakeLock: _disableWakeLock, onAudioData, captureAudio, avatarContainerSelector, }: StartOptions): Promise<void>;
+    start({ agentId, versionRef, params, voiceEnablement, isChatOnly, tools, userId: _userId, preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices, connectionDelay: _connectionDelay, disableWakeLock: _disableWakeLock, onAudioData, captureAudio, avatarContainerSelector, }: StartOptions): Promise<void>;
     /**
      * Terminates the current voice agent conversation
      *

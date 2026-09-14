@@ -118,6 +118,20 @@ type StartOptions = {
   /** Unique identifier of the voice agent to start (from Hamsa dashboard) */
   agentId: string;
   /**
+   * Which version of the agent this conversation should run.
+   *
+   * A published version id, `"latest"` for whatever is currently live, or
+   * `"draft"` for the unpublished working copy. Omit it and the backend
+   * behaves exactly as it always has, which is why nothing is sent on the wire
+   * unless a caller asks for it.
+   *
+   * An environment is saved with each version, so naming the version is enough:
+   * the runtime resolves variables from whatever that version carries. There is
+   * deliberately no separate environment option, which would let a call
+   * disagree with its own version.
+   */
+  versionRef?: string;
+  /**
    * Optional parameters to pass to the agent for conversation customization
    * These can be referenced in agent prompts using {{parameter_name}} syntax
    * @example { userName: "John", orderNumber: "12345", userTier: "premium" }
@@ -1268,6 +1282,7 @@ class HamsaVoiceAgent extends EventEmitter {
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Method sets up multiple event listeners with logging - refactoring would split event handling logic
   async start({
     agentId,
+    versionRef,
     params = {},
     voiceEnablement = false,
     isChatOnly = false,
@@ -1301,6 +1316,7 @@ class HamsaVoiceAgent extends EventEmitter {
 
       const accessToken = await this.#initializeLiveKitConversation({
         voiceAgentId: agentId,
+        versionRef,
         params,
         voiceEnablement,
         tools,
@@ -1939,25 +1955,33 @@ class HamsaVoiceAgent extends EventEmitter {
    */
   async #initializeLiveKitConversation(options: {
     voiceAgentId: string;
+    versionRef?: string;
     params: Record<string, unknown>;
     voiceEnablement: boolean;
     tools: Tool[];
     isChatOnly: boolean;
   }): Promise<string> {
-    const { voiceAgentId, params, voiceEnablement, tools, isChatOnly } =
-      options;
+    const {
+      voiceAgentId,
+      versionRef,
+      params,
+      voiceEnablement,
+      tools,
+      isChatOnly,
+    } = options;
     const headers = {
       Authorization: `Token ${this.apiKey}`,
       'Content-Type': 'application/json',
     };
 
     // Step 1: Get LiveKit participant token
-    const tokenData = await this.#fetchParticipantToken(
+    const tokenData = await this.#fetchParticipantToken({
       voiceAgentId,
       params,
       headers,
-      isChatOnly
-    );
+      isChatOnly,
+      versionRef,
+    });
     const liveKitAccessToken = tokenData.liveKitAccessToken;
     const jobIdFromToken = this.#resolveJobIdFromToken(
       liveKitAccessToken,
@@ -1968,6 +1992,7 @@ class HamsaVoiceAgent extends EventEmitter {
     // Step 2: Initialize conversation with token
     await this.#initializeConversation({
       voiceAgentId,
+      versionRef,
       params,
       voiceEnablement,
       tools,
@@ -2016,12 +2041,14 @@ class HamsaVoiceAgent extends EventEmitter {
   /**
    * Fetches the LiveKit participant token from the API
    */
-  async #fetchParticipantToken(
-    voiceAgentId: string,
-    params: Record<string, unknown>,
-    headers: Record<string, string>,
-    isChatOnly: boolean
-  ): Promise<{ liveKitAccessToken: string; jobId?: string }> {
+  async #fetchParticipantToken(options: {
+    voiceAgentId: string;
+    params: Record<string, unknown>;
+    headers: Record<string, string>;
+    isChatOnly: boolean;
+    versionRef?: string;
+  }): Promise<{ liveKitAccessToken: string; jobId?: string }> {
+    const { voiceAgentId, params, headers, isChatOnly, versionRef } = options;
     this.logger.log('Fetching participant token from API', {
       source: 'HamsaVoiceAgent',
       error: {
@@ -2037,7 +2064,14 @@ class HamsaVoiceAgent extends EventEmitter {
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ voiceAgentId, params, isChatOnly }),
+        // Spread rather than always-present: omitting it keeps the request
+        // byte-identical to what every existing caller already sends.
+        body: JSON.stringify({
+          voiceAgentId,
+          params,
+          isChatOnly,
+          ...(versionRef ? { versionRef } : {}),
+        }),
       }
     );
 
@@ -2093,6 +2127,7 @@ class HamsaVoiceAgent extends EventEmitter {
    */
   async #initializeConversation(options: {
     voiceAgentId: string;
+    versionRef?: string;
     params: Record<string, unknown>;
     voiceEnablement: boolean;
     tools: Tool[];
@@ -2103,6 +2138,7 @@ class HamsaVoiceAgent extends EventEmitter {
   }): Promise<void> {
     const {
       voiceAgentId,
+      versionRef,
       params,
       voiceEnablement,
       tools,
@@ -2126,6 +2162,7 @@ class HamsaVoiceAgent extends EventEmitter {
       // is recorded under the Chat channel rather than Web.
       channelType: isChatOnly ? 'Chat Agent' : 'Web',
       isChatOnly,
+      ...(versionRef ? { versionRef } : {}),
     };
 
     this.logger.log('Initializing conversation with API', {
