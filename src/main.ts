@@ -125,12 +125,35 @@ type StartOptions = {
    * behaves exactly as it always has, which is why nothing is sent on the wire
    * unless a caller asks for it.
    *
-   * An environment is saved with each version, so naming the version is enough:
-   * the runtime resolves variables from whatever that version carries. There is
-   * deliberately no separate environment option, which would let a call
-   * disagree with its own version.
+   * An environment holds a published version, so naming an environment is a
+   * complete answer: `prod` runs whatever is published there. Version ids are
+   * the escape hatch for the rare case rather than the everyday interface.
    */
   versionRef?: string;
+  /**
+   * Which environment's values to resolve, overriding the one the chosen
+   * version is published into.
+   *
+   * Absent is the normal case and means the values follow the version, which
+   * is what every caller integrating this SDK wants: `versionRef: 'prod'`
+   * already implies prod's values.
+   *
+   * This exists for one workflow. An operator testing a specific version
+   * against a specific environment's values, deliberately, for their own call.
+   * Reading an old version against `staging` values is a real thing to want,
+   * and without this the only way to reach it is to publish something.
+   *
+   * There was deliberately no such option before, on the grounds that it would
+   * let a call disagree with its own version. That was right while an
+   * environment could not hold a version: naming one said which values to use
+   * while saying nothing about which agent to run, so the two could contradict
+   * each other silently. Now the default follows the version and the
+   * disagreement is only ever something a human asked for.
+   *
+   * Affects this call alone. Nothing is persisted and no other caller is
+   * touched.
+   */
+  environmentId?: string;
   /**
    * Optional parameters to pass to the agent for conversation customization
    * These can be referenced in agent prompts using {{parameter_name}} syntax
@@ -1283,6 +1306,7 @@ class HamsaVoiceAgent extends EventEmitter {
   async start({
     agentId,
     versionRef,
+    environmentId,
     params = {},
     voiceEnablement = false,
     isChatOnly = false,
@@ -1317,6 +1341,7 @@ class HamsaVoiceAgent extends EventEmitter {
       const accessToken = await this.#initializeLiveKitConversation({
         voiceAgentId: agentId,
         versionRef,
+        environmentId,
         params,
         voiceEnablement,
         tools,
@@ -1956,6 +1981,7 @@ class HamsaVoiceAgent extends EventEmitter {
   async #initializeLiveKitConversation(options: {
     voiceAgentId: string;
     versionRef?: string;
+    environmentId?: string;
     params: Record<string, unknown>;
     voiceEnablement: boolean;
     tools: Tool[];
@@ -1964,6 +1990,7 @@ class HamsaVoiceAgent extends EventEmitter {
     const {
       voiceAgentId,
       versionRef,
+      environmentId,
       params,
       voiceEnablement,
       tools,
@@ -1981,6 +2008,7 @@ class HamsaVoiceAgent extends EventEmitter {
       headers,
       isChatOnly,
       versionRef,
+      environmentId,
     });
     const liveKitAccessToken = tokenData.liveKitAccessToken;
     const jobIdFromToken = this.#resolveJobIdFromToken(
@@ -1993,6 +2021,7 @@ class HamsaVoiceAgent extends EventEmitter {
     await this.#initializeConversation({
       voiceAgentId,
       versionRef,
+      environmentId,
       params,
       voiceEnablement,
       tools,
@@ -2047,8 +2076,16 @@ class HamsaVoiceAgent extends EventEmitter {
     headers: Record<string, string>;
     isChatOnly: boolean;
     versionRef?: string;
+    environmentId?: string;
   }): Promise<{ liveKitAccessToken: string; jobId?: string }> {
-    const { voiceAgentId, params, headers, isChatOnly, versionRef } = options;
+    const {
+      voiceAgentId,
+      params,
+      headers,
+      isChatOnly,
+      versionRef,
+      environmentId,
+    } = options;
     this.logger.log('Fetching participant token from API', {
       source: 'HamsaVoiceAgent',
       error: {
@@ -2071,6 +2108,7 @@ class HamsaVoiceAgent extends EventEmitter {
           params,
           isChatOnly,
           ...(versionRef ? { versionRef } : {}),
+          ...(environmentId ? { environmentId } : {}),
         }),
       }
     );
@@ -2128,6 +2166,7 @@ class HamsaVoiceAgent extends EventEmitter {
   async #initializeConversation(options: {
     voiceAgentId: string;
     versionRef?: string;
+    environmentId?: string;
     params: Record<string, unknown>;
     voiceEnablement: boolean;
     tools: Tool[];
@@ -2139,6 +2178,7 @@ class HamsaVoiceAgent extends EventEmitter {
     const {
       voiceAgentId,
       versionRef,
+      environmentId,
       params,
       voiceEnablement,
       tools,
@@ -2163,6 +2203,7 @@ class HamsaVoiceAgent extends EventEmitter {
       channelType: isChatOnly ? 'Chat Agent' : 'Web',
       isChatOnly,
       ...(versionRef ? { versionRef } : {}),
+      ...(environmentId ? { environmentId } : {}),
     };
 
     this.logger.log('Initializing conversation with API', {
