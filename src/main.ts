@@ -155,6 +155,20 @@ type StartOptions = {
    */
   environmentId?: string;
   /**
+   * A short-lived call token, minted server-side, to start this call with
+   * instead of an API key.
+   *
+   * A token is issued to a signed-in person (or, later, by a customer's own
+   * server), already knows which agent, version and environment it runs, lives
+   * about 30 seconds and starts one call. It is sent as
+   * `Authorization: CallToken <token>`.
+   *
+   * With a token, `versionRef` and `environmentId` are not sent: the token
+   * decides them, and the backend ignores anything the browser says about
+   * them. No API key is needed, so none has to be in the page.
+   */
+  callToken?: string;
+  /**
    * Optional parameters to pass to the agent for conversation customization
    * These can be referenced in agent prompts using {{parameter_name}} syntax
    * @example { userName: "John", orderNumber: "12345", userTier: "premium" }
@@ -548,8 +562,11 @@ class HamsaVoiceAgent extends EventEmitter {
   /** Internal LiveKit manager instance for WebRTC communication */
   liveKitManager: LiveKitManager | null = null;
 
-  /** Hamsa API key for authentication */
-  apiKey: string;
+  /**
+   * Hamsa API key for authentication. Null when calls are started with a call
+   * token instead (see `StartOptions.callToken`).
+   */
+  apiKey: string | null;
 
   /** Base URL for Hamsa API endpoints */
   API_URL: string;
@@ -575,7 +592,9 @@ class HamsaVoiceAgent extends EventEmitter {
   /**
    * Creates a new HamsaVoiceAgent instance
    *
-   * @param apiKey - Your Hamsa API key (get from https://dashboard.tryhamsa.com)
+   * @param apiKey - Your Hamsa API key (get from https://dashboard.tryhamsa.com).
+   *   Leave it out, passing the config first, when every call starts with a
+   *   call token: `new HamsaVoiceAgent({ region: 'eu' })`.
    * @param config - Optional configuration settings
    * @param config.region - Deployment region ('eu' | 'uae'). Defaults to 'eu'.
    * @param config.API_URL - Custom API endpoint URL. Overrides the region default.
@@ -594,23 +613,28 @@ class HamsaVoiceAgent extends EventEmitter {
    *   API_URL: 'https://custom-api.example.com',
    *   LIVEKIT_URL: 'wss://custom-rtc.example.com'
    * });
-   * ```
    *
-   * @throws {Error} If apiKey is not provided or invalid
+   * // No API key: each call starts with a token minted server-side
+   * const agent = new HamsaVoiceAgent({ region: 'eu' });
+   * await agent.start({ agentId, callToken });
+   * ```
    */
   constructor(
-    apiKey: string,
-    {
+    apiKeyOrConfig?: string | HamsaVoiceAgentConfig,
+    config: HamsaVoiceAgentConfig = {}
+  ) {
+    super();
+    const keyless =
+      typeof apiKeyOrConfig === 'object' && apiKeyOrConfig !== null;
+    const {
       region = 'eu',
       API_URL,
       LIVEKIT_URL,
       debug = false,
-    }: HamsaVoiceAgentConfig = {}
-  ) {
-    super();
+    } = keyless ? apiKeyOrConfig : config;
     const regionDefaults = REGION_CONFIG[region];
     this.liveKitManager = null;
-    this.apiKey = apiKey;
+    this.apiKey = keyless ? null : (apiKeyOrConfig ?? null) || null;
     this.API_URL = API_URL ?? regionDefaults.API_URL;
     this.LIVEKIT_URL = LIVEKIT_URL ?? regionDefaults.LIVEKIT_URL;
     this.debug = debug;
@@ -1307,6 +1331,7 @@ class HamsaVoiceAgent extends EventEmitter {
     agentId,
     versionRef,
     environmentId,
+    callToken,
     params = {},
     voiceEnablement = false,
     isChatOnly = false,
@@ -1340,8 +1365,11 @@ class HamsaVoiceAgent extends EventEmitter {
 
       const accessToken = await this.#initializeLiveKitConversation({
         voiceAgentId: agentId,
-        versionRef,
-        environmentId,
+        // A call token already decides both; the backend ignores them next to
+        // one, so they are not sent at all.
+        versionRef: callToken ? undefined : versionRef,
+        environmentId: callToken ? undefined : environmentId,
+        authorization: this.#authorizationFor(callToken),
         params,
         voiceEnablement,
         tools,
@@ -1927,6 +1955,14 @@ class HamsaVoiceAgent extends EventEmitter {
       );
     }
 
+    if (!this.apiKey) {
+      // A call token starts one call and is spent doing it; reading the job
+      // afterwards is a server-side job for a real credential.
+      throw new Error(
+        'Cannot fetch job details without an API key. A call token only starts a call.'
+      );
+    }
+
     const url = `${this.API_URL}/v1/voice-agents/conversation/${this.jobId}`;
     const headers = {
       Authorization: `Token ${this.apiKey}`,
@@ -1978,7 +2014,25 @@ class HamsaVoiceAgent extends EventEmitter {
    * @param tools - Array of tools/functions to be used.
    * @returns The LiveKit access token or null if failed.
    */
+  /**
+   * The `Authorization` header a call starts with: the call token when one is
+   * given, otherwise the API key. Neither is an error before any request is
+   * made, so a misconfigured page fails with a message rather than a 401.
+   */
+  #authorizationFor(callToken?: string): string {
+    if (callToken) {
+      return `CallToken ${callToken}`;
+    }
+    if (this.apiKey) {
+      return `Token ${this.apiKey}`;
+    }
+    throw new Error(
+      'Cannot start a call: no API key and no callToken. Pass an API key to the constructor, or a callToken to start().'
+    );
+  }
+
   async #initializeLiveKitConversation(options: {
+    authorization: string;
     voiceAgentId: string;
     versionRef?: string;
     environmentId?: string;
@@ -1988,6 +2042,7 @@ class HamsaVoiceAgent extends EventEmitter {
     isChatOnly: boolean;
   }): Promise<string> {
     const {
+      authorization,
       voiceAgentId,
       versionRef,
       environmentId,
@@ -1997,7 +2052,7 @@ class HamsaVoiceAgent extends EventEmitter {
       isChatOnly,
     } = options;
     const headers = {
-      Authorization: `Token ${this.apiKey}`,
+      Authorization: authorization,
       'Content-Type': 'application/json',
     };
 
