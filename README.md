@@ -73,6 +73,23 @@ agent.start({
 
 When creating an agent, you can add parameters to your pre-defined values. For example, you can set your Greeting Message to: "Hello {{name}}, how can I help you today?" and pass the "name" as a parameter to use the correct name of the user.
 
+### Starting a call with a call token
+
+A call can start with a short-lived call token instead of an API key, so the page holds no key at all. A token is minted server-side, already knows which agent, version and environment it runs, lives about 30 seconds and starts one call. It is sent as `Authorization: CallToken <token>`.
+
+```javascript
+const agent = new HamsaVoiceAgent({ region: "eu" }); // no API key
+
+agent.start({
+  agentId: YOUR_AGENT_ID,
+  callToken, // minted by your server just before the call
+});
+```
+
+With a token, `versionRef` and `environmentId` are not sent: the token decides them. `getJobDetails()` needs an API key, since a token is spent starting the call.
+
+Today tokens are minted for signed-in users of the Hamsa dashboard. Minting from your own server arrives with secret keys.
+
 ## Pause/Resume a Conversation
 
 To pause the conversation, call the "pause" function. This will prevent the SDK from sending or receiving new data until you resume the conversation:

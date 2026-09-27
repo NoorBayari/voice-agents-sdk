@@ -93,6 +93,20 @@ type StartOptions = {
      */
     environmentId?: string;
     /**
+     * A short-lived call token, minted server-side, to start this call with
+     * instead of an API key.
+     *
+     * A token is issued to a signed-in person (or, later, by a customer's own
+     * server), already knows which agent, version and environment it runs, lives
+     * about 30 seconds and starts one call. It is sent as
+     * `Authorization: CallToken <token>`.
+     *
+     * With a token, `versionRef` and `environmentId` are not sent: the token
+     * decides them, and the backend ignores anything the browser says about
+     * them. No API key is needed, so none has to be in the page.
+     */
+    callToken?: string;
+    /**
      * Optional parameters to pass to the agent for conversation customization
      * These can be referenced in agent prompts using {{parameter_name}} syntax
      * @example { userName: "John", orderNumber: "12345", userTier: "premium" }
@@ -433,8 +447,11 @@ declare class HamsaVoiceAgent extends EventEmitter {
     private static readonly DEFAULT_INPUT_VOLUME;
     /** Internal LiveKit manager instance for WebRTC communication */
     liveKitManager: LiveKitManager | null;
-    /** Hamsa API key for authentication */
-    apiKey: string;
+    /**
+     * Hamsa API key for authentication. Null when calls are started with a call
+     * token instead (see `StartOptions.callToken`).
+     */
+    apiKey: string | null;
     /** Base URL for Hamsa API endpoints */
     API_URL: string;
     /** LiveKit RTC WebSocket URL */
@@ -452,7 +469,9 @@ declare class HamsaVoiceAgent extends EventEmitter {
     /**
      * Creates a new HamsaVoiceAgent instance
      *
-     * @param apiKey - Your Hamsa API key (get from https://dashboard.tryhamsa.com)
+     * @param apiKey - Your Hamsa API key (get from https://dashboard.tryhamsa.com).
+     *   Leave it out, passing the config first, when every call starts with a
+     *   call token: `new HamsaVoiceAgent({ region: 'eu' })`.
      * @param config - Optional configuration settings
      * @param config.region - Deployment region ('eu' | 'uae'). Defaults to 'eu'.
      * @param config.API_URL - Custom API endpoint URL. Overrides the region default.
@@ -471,11 +490,13 @@ declare class HamsaVoiceAgent extends EventEmitter {
      *   API_URL: 'https://custom-api.example.com',
      *   LIVEKIT_URL: 'wss://custom-rtc.example.com'
      * });
-     * ```
      *
-     * @throws {Error} If apiKey is not provided or invalid
+     * // No API key: each call starts with a token minted server-side
+     * const agent = new HamsaVoiceAgent({ region: 'eu' });
+     * await agent.start({ agentId, callToken });
+     * ```
      */
-    constructor(apiKey: string, { region, API_URL, LIVEKIT_URL, debug, }?: HamsaVoiceAgentConfig);
+    constructor(apiKeyOrConfig?: string | HamsaVoiceAgentConfig, config?: HamsaVoiceAgentConfig);
     /**
      * Adjusts the volume level for voice agent audio playback
      *
@@ -988,7 +1009,7 @@ declare class HamsaVoiceAgent extends EventEmitter {
      * await agent.start({ agentId: 'my_agent', voiceEnablement: true });
      * ```
      */
-    start({ agentId, versionRef, environmentId, params, voiceEnablement, isChatOnly, tools, userId: _userId, preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices, connectionDelay: _connectionDelay, disableWakeLock: _disableWakeLock, onAudioData, captureAudio, avatarContainerSelector, }: StartOptions): Promise<void>;
+    start({ agentId, versionRef, environmentId, callToken, params, voiceEnablement, isChatOnly, tools, userId: _userId, preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices, connectionDelay: _connectionDelay, disableWakeLock: _disableWakeLock, onAudioData, captureAudio, avatarContainerSelector, }: StartOptions): Promise<void>;
     /**
      * Terminates the current voice agent conversation
      *
