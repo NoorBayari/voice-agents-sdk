@@ -90,6 +90,19 @@ With a token, `versionRef` and `environmentId` are not sent: the token decides t
 
 Today tokens are minted for signed-in users of the Hamsa dashboard. Minting from your own server arrives with secret keys.
 
+### Keeping a caller on one version during an A/B test
+
+While an agent's prod runs an A/B test, each call is assigned a version by weight. Phone callers stay on one side by their number. A web call has no number, so pass `callerKey`, a stable id for your end user (1 to 200 characters), to keep them on the same version while the test lasts:
+
+```javascript
+agent.start({
+  agentId: YOUR_AGENT_ID,
+  callerKey: currentUser.id, // stable across visits, never a secret
+});
+```
+
+Without it, each web call is assigned on its own: weighted, but not sticky.
+
 ## Pause/Resume a Conversation
 
 To pause the conversation, call the "pause" function. This will prevent the SDK from sending or receiving new data until you resume the conversation:

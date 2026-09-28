@@ -63,6 +63,9 @@ class HamsaApiError extends Error {
   }
 }
 
+/** The longest `callerKey` the backend accepts. */
+const MAX_CALLER_KEY_LENGTH = 200;
+
 /**
  * Supported deployment regions for the Hamsa platform.
  * Determines the default API and LiveKit URLs used for the connection.
@@ -120,10 +123,10 @@ type StartOptions = {
   /**
    * Which version of the agent this conversation should run.
    *
-   * A published version id, `"latest"` for whatever is currently live, or
-   * `"draft"` for the unpublished working copy. Omit it and the backend
-   * behaves exactly as it always has, which is why nothing is sent on the wire
-   * unless a caller asks for it.
+   * A published version id, or `"draft"` for the unpublished working copy.
+   * Omit it to run what prod serves; the backend then behaves exactly as it
+   * always has, which is why nothing is sent on the wire unless a caller asks
+   * for it. (`"latest"` is no longer accepted.)
    *
    * An environment holds a published version, so naming an environment is a
    * complete answer: `prod` runs whatever is published there. Version ids are
@@ -168,6 +171,20 @@ type StartOptions = {
    * them. No API key is needed, so none has to be in the page.
    */
   callToken?: string;
+  /**
+   * A stable id for your end user (1 to 200 characters), so an A/B test keeps
+   * them on the same version for as long as the split lasts.
+   *
+   * During a split, each call is assigned a version by weight. Phone callers
+   * are kept on one side by their number; a web call has no number, so
+   * without this every call is assigned on its own: weighted, but not sticky.
+   * Use something that stays the same for the person across visits, such as
+   * your own user id, and never anything secret.
+   *
+   * Sent once, when the call starts; the rest of the call reuses the version
+   * chosen then.
+   */
+  callerKey?: string;
   /**
    * Optional parameters to pass to the agent for conversation customization
    * These can be referenced in agent prompts using {{parameter_name}} syntax
@@ -1332,6 +1349,7 @@ class HamsaVoiceAgent extends EventEmitter {
     versionRef,
     environmentId,
     callToken,
+    callerKey,
     params = {},
     voiceEnablement = false,
     isChatOnly = false,
@@ -1363,8 +1381,20 @@ class HamsaVoiceAgent extends EventEmitter {
         },
       });
 
+      if (
+        callerKey !== undefined &&
+        (typeof callerKey !== 'string' ||
+          callerKey.length < 1 ||
+          callerKey.length > MAX_CALLER_KEY_LENGTH)
+      ) {
+        throw new Error(
+          'Cannot start a call: callerKey must be a string of 1 to 200 characters.'
+        );
+      }
+
       const accessToken = await this.#initializeLiveKitConversation({
         voiceAgentId: agentId,
+        callerKey,
         // A call token already decides both; the backend ignores them next to
         // one, so they are not sent at all.
         versionRef: callToken ? undefined : versionRef,
@@ -2034,6 +2064,7 @@ class HamsaVoiceAgent extends EventEmitter {
   async #initializeLiveKitConversation(options: {
     authorization: string;
     voiceAgentId: string;
+    callerKey?: string;
     versionRef?: string;
     environmentId?: string;
     params: Record<string, unknown>;
@@ -2044,6 +2075,7 @@ class HamsaVoiceAgent extends EventEmitter {
     const {
       authorization,
       voiceAgentId,
+      callerKey,
       versionRef,
       environmentId,
       params,
@@ -2064,6 +2096,7 @@ class HamsaVoiceAgent extends EventEmitter {
       isChatOnly,
       versionRef,
       environmentId,
+      callerKey,
     });
     const liveKitAccessToken = tokenData.liveKitAccessToken;
     const jobIdFromToken = this.#resolveJobIdFromToken(
@@ -2132,6 +2165,7 @@ class HamsaVoiceAgent extends EventEmitter {
     isChatOnly: boolean;
     versionRef?: string;
     environmentId?: string;
+    callerKey?: string;
   }): Promise<{ liveKitAccessToken: string; jobId?: string }> {
     const {
       voiceAgentId,
@@ -2140,6 +2174,7 @@ class HamsaVoiceAgent extends EventEmitter {
       isChatOnly,
       versionRef,
       environmentId,
+      callerKey,
     } = options;
     this.logger.log('Fetching participant token from API', {
       source: 'HamsaVoiceAgent',
@@ -2164,6 +2199,8 @@ class HamsaVoiceAgent extends EventEmitter {
           isChatOnly,
           ...(versionRef ? { versionRef } : {}),
           ...(environmentId ? { environmentId } : {}),
+          // Only here: conversation-init reuses the version this request chose.
+          ...(callerKey ? { callerKey } : {}),
         }),
       }
     );
