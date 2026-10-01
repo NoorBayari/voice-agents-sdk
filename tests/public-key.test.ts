@@ -15,6 +15,7 @@ const RETRY_AFTER_SECONDS = 12;
 
 const STAGING_RUNS_NOTHING = /staging runs nothing/;
 const WAIT_TWELVE_SECONDS = /12 seconds/;
+const TRY_AGAIN_SHORTLY = /Try again shortly/;
 const OTHER_AGENTS = /limited to other agents/;
 const REPLACED = /replaced by a newer one/;
 const FUNCTION_FAILED = /callToken function failed: server down/;
@@ -183,6 +184,23 @@ describe('publicKey', () => {
     expect(error.messageKey).toBe('ApiKeyRateLimited');
     expect(error.retryAfter).toBe(RETRY_AFTER_SECONDS);
     expect(error.message).toMatch(WAIT_TWELVE_SECONDS);
+  });
+
+  test('a rate limit whose Retry-After the page cannot read says "shortly", not 0 seconds', async () => {
+    serve(
+      refused(HTTP.tooMany, {
+        message: 'Too many requests',
+        messageKey: 'ApiKeyRateLimited',
+      })
+    );
+    const agent = new HamsaVoiceAgent({ publicKey: 'pk_test' });
+    const error = (await startCatching(agent, {
+      agentId: 'agent-1',
+    })) as HamsaApiError;
+
+    expect(error.messageKey).toBe('ApiKeyRateLimited');
+    expect(error.retryAfter).toBeUndefined();
+    expect(error.message).toMatch(TRY_AGAIN_SHORTLY);
   });
 
   test.each([
