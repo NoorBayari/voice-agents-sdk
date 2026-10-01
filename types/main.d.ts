@@ -14,7 +14,20 @@ export type { AudioCaptureCallback, AudioCaptureFormat, AudioCaptureMetadata, Au
 declare class HamsaApiError extends Error {
     /** Machine-readable error key for i18n or programmatic handling */
     readonly messageKey?: string;
-    constructor(message: string, messageKey?: string);
+    /** The HTTP status the API answered with, when the error came from it. */
+    readonly status?: number;
+    /**
+     * Details the API sent with the error, for example `{ environment: 'staging' }`
+     * with `EnvironmentNotDeployed`.
+     */
+    readonly params?: Record<string, unknown>;
+    /** Seconds to wait before trying again, with `ApiKeyRateLimited`. */
+    readonly retryAfter?: number;
+    constructor(message: string, messageKey?: string, details?: {
+        status?: number;
+        params?: Record<string, unknown>;
+        retryAfter?: number;
+    });
 }
 /**
  * Supported deployment regions for the Hamsa platform.
@@ -37,6 +50,19 @@ type HamsaVoiceAgentConfig = {
     LIVEKIT_URL?: string;
     /** Enable debug logging for troubleshooting. Defaults to false */
     debug?: boolean;
+    /**
+     * A public key (`pk_…`) from the Hamsa dashboard's API keys page.
+     *
+     * Safe to put in a web page or an app: it can only start calls, and only in
+     * the environment it was made for (dev, staging or prod), running what that
+     * environment runs with its values. With it, `start()` gets a call token
+     * itself and starts the call with it; nothing else is needed.
+     *
+     * Never pass a secret key (`sk_…`) here, or anywhere in a page: secret keys
+     * stay on your server, which mints call tokens for the page (see
+     * `StartOptions.callToken`).
+     */
+    publicKey?: string;
 };
 /**
  * Configuration options for starting a voice agent conversation
@@ -58,10 +84,10 @@ type StartOptions = {
     /**
      * Which version of the agent this conversation should run.
      *
-     * A published version id, `"latest"` for whatever is currently live, or
-     * `"draft"` for the unpublished working copy. Omit it and the backend
-     * behaves exactly as it always has, which is why nothing is sent on the wire
-     * unless a caller asks for it.
+     * A published version id, or `"draft"` for the unpublished working copy.
+     * Omit it to run what prod serves; the backend then behaves exactly as it
+     * always has, which is why nothing is sent on the wire unless a caller asks
+     * for it. (`"latest"` is no longer accepted.)
      *
      * An environment holds a published version, so naming an environment is a
      * complete answer: `prod` runs whatever is published there. Version ids are
@@ -94,18 +120,42 @@ type StartOptions = {
     environmentId?: string;
     /**
      * A short-lived call token, minted server-side, to start this call with
-     * instead of an API key.
+     * instead of a key: the token itself, or a function that gets one.
      *
-     * A token is issued to a signed-in person (or, later, by a customer's own
-     * server), already knows which agent, version and environment it runs, lives
-     * about 30 seconds and starts one call. It is sent as
-     * `Authorization: CallToken <token>`.
+     * With a secret key, your server mints the token
+     * (`POST /v1/voice-agents/call-token` with `Authorization: Token sk_…`) and
+     * the page asks it for one. Pass a function and the SDK calls it as the call
+     * starts, so the token (which lives about 30 seconds and starts one call) is
+     * fresh when it is used:
      *
-     * With a token, `versionRef` and `environmentId` are not sent: the token
-     * decides them, and the backend ignores anything the browser says about
-     * them. No API key is needed, so none has to be in the page.
+     * ```js
+     * agent.start({
+     *   agentId,
+     *   callToken: () =>
+     *     fetch('/my-server/hamsa-token').then((r) => r.json()).then((d) => d.callToken),
+     * });
+     * ```
+     *
+     * The token already knows which agent, version and environment it runs, so
+     * `versionRef` and `environmentId` are not sent next to it. It is sent as
+     * `Authorization: CallToken <token>`. A token wins over a public key or an
+     * API key given to the constructor.
      */
-    callToken?: string;
+    callToken?: string | (() => string | Promise<string>);
+    /**
+     * A stable id for your end user (1 to 200 characters), so an A/B test keeps
+     * them on the same version for as long as the split lasts.
+     *
+     * During a split, each call is assigned a version by weight. Phone callers
+     * are kept on one side by their number; a web call has no number, so
+     * without this every call is assigned on its own: weighted, but not sticky.
+     * Use something that stays the same for the person across visits, such as
+     * your own user id, and never anything secret.
+     *
+     * Sent once, when the call starts; the rest of the call reuses the version
+     * chosen then.
+     */
+    callerKey?: string;
     /**
      * Optional parameters to pass to the agent for conversation customization
      * These can be referenced in agent prompts using {{parameter_name}} syntax
@@ -452,6 +502,11 @@ declare class HamsaVoiceAgent extends EventEmitter {
      * token instead (see `StartOptions.callToken`).
      */
     apiKey: string | null;
+    /**
+     * The public key (`pk_…`) calls start with, when one was given: `start()`
+     * mints a call token with it. Null otherwise.
+     */
+    publicKey: string | null;
     /** Base URL for Hamsa API endpoints */
     API_URL: string;
     /** LiveKit RTC WebSocket URL */
@@ -491,9 +546,13 @@ declare class HamsaVoiceAgent extends EventEmitter {
      *   LIVEKIT_URL: 'wss://custom-rtc.example.com'
      * });
      *
-     * // No API key: each call starts with a token minted server-side
+     * // A web page or app: a public key, and nothing else
+     * const agent = new HamsaVoiceAgent({ publicKey: 'pk_…' });
+     * await agent.start({ agentId });
+     *
+     * // A secret key on your server: the page gets each call's token from it
      * const agent = new HamsaVoiceAgent({ region: 'eu' });
-     * await agent.start({ agentId, callToken });
+     * await agent.start({ agentId, callToken: () => getTokenFromMyServer() });
      * ```
      */
     constructor(apiKeyOrConfig?: string | HamsaVoiceAgentConfig, config?: HamsaVoiceAgentConfig);
@@ -1009,7 +1068,7 @@ declare class HamsaVoiceAgent extends EventEmitter {
      * await agent.start({ agentId: 'my_agent', voiceEnablement: true });
      * ```
      */
-    start({ agentId, versionRef, environmentId, callToken, params, voiceEnablement, isChatOnly, tools, userId: _userId, preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices, connectionDelay: _connectionDelay, disableWakeLock: _disableWakeLock, onAudioData, captureAudio, avatarContainerSelector, }: StartOptions): Promise<void>;
+    start({ agentId, versionRef, environmentId, callToken, callerKey, params, voiceEnablement, isChatOnly, tools, userId: _userId, preferHeadphonesForIosDevices: _preferHeadphonesForIosDevices, connectionDelay: _connectionDelay, disableWakeLock: _disableWakeLock, onAudioData, captureAudio, avatarContainerSelector, }: StartOptions): Promise<void>;
     /**
      * Terminates the current voice agent conversation
      *

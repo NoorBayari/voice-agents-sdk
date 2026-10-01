@@ -55,16 +55,67 @@ export type {
 class HamsaApiError extends Error {
   /** Machine-readable error key for i18n or programmatic handling */
   readonly messageKey?: string;
+  /** The HTTP status the API answered with, when the error came from it. */
+  readonly status?: number;
+  /**
+   * Details the API sent with the error, for example `{ environment: 'staging' }`
+   * with `EnvironmentNotDeployed`.
+   */
+  readonly params?: Record<string, unknown>;
+  /** Seconds to wait before trying again, with `ApiKeyRateLimited`. */
+  readonly retryAfter?: number;
 
-  constructor(message: string, messageKey?: string) {
+  constructor(
+    message: string,
+    messageKey?: string,
+    details: {
+      status?: number;
+      params?: Record<string, unknown>;
+      retryAfter?: number;
+    } = {}
+  ) {
     super(message);
     this.name = 'HamsaApiError';
     this.messageKey = messageKey;
+    this.status = details.status;
+    this.params = details.params;
+    this.retryAfter = details.retryAfter;
   }
 }
 
 /** The longest `callerKey` the backend accepts. */
 const MAX_CALLER_KEY_LENGTH = 200;
+
+/**
+ * What a refused public-key mint means, in a sentence that says what to do.
+ * The API's own message is kept for anything not listed here.
+ */
+function mintRefusal(
+  messageKey: string | undefined,
+  params: Record<string, unknown> = {},
+  retryAfter?: number
+): string | undefined {
+  const environment =
+    typeof params.environment === 'string' ? params.environment : 'its';
+  switch (messageKey) {
+    case 'EnvironmentNotDeployed':
+      return `This public key is for ${environment}, and ${environment} runs nothing for this agent yet. Deploy a version to ${environment}, or use the key for another environment.`;
+    case 'KeyNotForAgent':
+      return 'This public key is limited to other agents. Allow this agent on the key, or use another key.';
+    case 'ApiKeyRateLimited':
+      return Number.isFinite(retryAfter)
+        ? `Too many calls started with this key in a minute. Try again in ${retryAfter} seconds.`
+        : 'Too many calls started with this key in a minute. Try again shortly.';
+    case 'KeyRotated':
+      return 'This key value was replaced by a newer one. Use the current value from the API keys page.';
+    case 'PublicKeyFixedEnvironment':
+      return 'A public key always runs what its own environment runs, so versionRef and environmentId cannot be used with it.';
+    case 'CallTokenSessionOnly':
+      return 'This key cannot start calls from a page. Use a public key (pk_…).';
+    default:
+      return;
+  }
+}
 
 /**
  * Supported deployment regions for the Hamsa platform.
@@ -100,6 +151,19 @@ type HamsaVoiceAgentConfig = {
   LIVEKIT_URL?: string;
   /** Enable debug logging for troubleshooting. Defaults to false */
   debug?: boolean;
+  /**
+   * A public key (`pk_…`) from the Hamsa dashboard's API keys page.
+   *
+   * Safe to put in a web page or an app: it can only start calls, and only in
+   * the environment it was made for (dev, staging or prod), running what that
+   * environment runs with its values. With it, `start()` gets a call token
+   * itself and starts the call with it; nothing else is needed.
+   *
+   * Never pass a secret key (`sk_…`) here, or anywhere in a page: secret keys
+   * stay on your server, which mints call tokens for the page (see
+   * `StartOptions.callToken`).
+   */
+  publicKey?: string;
 };
 
 /**
@@ -159,18 +223,28 @@ type StartOptions = {
   environmentId?: string;
   /**
    * A short-lived call token, minted server-side, to start this call with
-   * instead of an API key.
+   * instead of a key: the token itself, or a function that gets one.
    *
-   * A token is issued to a signed-in person (or, later, by a customer's own
-   * server), already knows which agent, version and environment it runs, lives
-   * about 30 seconds and starts one call. It is sent as
-   * `Authorization: CallToken <token>`.
+   * With a secret key, your server mints the token
+   * (`POST /v1/voice-agents/call-token` with `Authorization: Token sk_…`) and
+   * the page asks it for one. Pass a function and the SDK calls it as the call
+   * starts, so the token (which lives about 30 seconds and starts one call) is
+   * fresh when it is used:
    *
-   * With a token, `versionRef` and `environmentId` are not sent: the token
-   * decides them, and the backend ignores anything the browser says about
-   * them. No API key is needed, so none has to be in the page.
+   * ```js
+   * agent.start({
+   *   agentId,
+   *   callToken: () =>
+   *     fetch('/my-server/hamsa-token').then((r) => r.json()).then((d) => d.callToken),
+   * });
+   * ```
+   *
+   * The token already knows which agent, version and environment it runs, so
+   * `versionRef` and `environmentId` are not sent next to it. It is sent as
+   * `Authorization: CallToken <token>`. A token wins over a public key or an
+   * API key given to the constructor.
    */
-  callToken?: string;
+  callToken?: string | (() => string | Promise<string>);
   /**
    * A stable id for your end user (1 to 200 characters), so an A/B test keeps
    * them on the same version for as long as the split lasts.
@@ -585,6 +659,12 @@ class HamsaVoiceAgent extends EventEmitter {
    */
   apiKey: string | null;
 
+  /**
+   * The public key (`pk_…`) calls start with, when one was given: `start()`
+   * mints a call token with it. Null otherwise.
+   */
+  publicKey: string | null;
+
   /** Base URL for Hamsa API endpoints */
   API_URL: string;
 
@@ -631,9 +711,13 @@ class HamsaVoiceAgent extends EventEmitter {
    *   LIVEKIT_URL: 'wss://custom-rtc.example.com'
    * });
    *
-   * // No API key: each call starts with a token minted server-side
+   * // A web page or app: a public key, and nothing else
+   * const agent = new HamsaVoiceAgent({ publicKey: 'pk_…' });
+   * await agent.start({ agentId });
+   *
+   * // A secret key on your server: the page gets each call's token from it
    * const agent = new HamsaVoiceAgent({ region: 'eu' });
-   * await agent.start({ agentId, callToken });
+   * await agent.start({ agentId, callToken: () => getTokenFromMyServer() });
    * ```
    */
   constructor(
@@ -648,16 +732,47 @@ class HamsaVoiceAgent extends EventEmitter {
       API_URL,
       LIVEKIT_URL,
       debug = false,
+      publicKey,
     } = keyless ? apiKeyOrConfig : config;
     const regionDefaults = REGION_CONFIG[region];
+    const apiKey = keyless ? null : (apiKeyOrConfig ?? null) || null;
+    HamsaVoiceAgent.#refuseMisplacedKeys(apiKey, publicKey);
     this.liveKitManager = null;
-    this.apiKey = keyless ? null : (apiKeyOrConfig ?? null) || null;
+    this.apiKey = apiKey;
+    this.publicKey = publicKey || null;
     this.API_URL = API_URL ?? regionDefaults.API_URL;
     this.LIVEKIT_URL = LIVEKIT_URL ?? regionDefaults.LIVEKIT_URL;
     this.debug = debug;
     this.logger = createDebugLogger(debug);
     this.jobId = null;
     this.wakeLockManager = new ScreenWakeLock();
+  }
+
+  /**
+   * A secret key never belongs in a page, and a public key goes in
+   * `publicKey`. Both mistakes are caught here, before any request, with a
+   * sentence that says what to do instead.
+   */
+  static #refuseMisplacedKeys(apiKey: string | null, publicKey?: string) {
+    const inBrowser = typeof window !== 'undefined';
+    if (
+      inBrowser &&
+      (apiKey?.startsWith('sk_') || publicKey?.startsWith('sk_'))
+    ) {
+      throw new Error(
+        'A secret key (sk_…) must stay on your server, never in a web page or an app. Use a public key (pk_…) in the page, or have your server mint call tokens and pass them as callToken.'
+      );
+    }
+    if (publicKey && !publicKey.startsWith('pk_')) {
+      throw new Error(
+        'publicKey must be a public key, starting with pk_. Find it on the API keys page of the Hamsa dashboard.'
+      );
+    }
+    if (apiKey?.startsWith('pk_')) {
+      throw new Error(
+        "This is a public key: pass it as publicKey, new HamsaVoiceAgent({ publicKey: 'pk_…' })."
+      );
+    }
   }
 
   /**
@@ -1392,14 +1507,25 @@ class HamsaVoiceAgent extends EventEmitter {
         );
       }
 
+      // A token given (or fetched by the function given), else one minted
+      // with the public key, else none: the API key starts the call as before.
+      const token = await this.#resolveCallToken({
+        agentId,
+        callToken,
+        isChatOnly,
+        callerKey,
+        versionRef,
+        environmentId,
+      });
+
       const accessToken = await this.#initializeLiveKitConversation({
         voiceAgentId: agentId,
         callerKey,
         // A call token already decides both; the backend ignores them next to
         // one, so they are not sent at all.
-        versionRef: callToken ? undefined : versionRef,
-        environmentId: callToken ? undefined : environmentId,
-        authorization: this.#authorizationFor(callToken),
+        versionRef: token ? undefined : versionRef,
+        environmentId: token ? undefined : environmentId,
+        authorization: this.#authorizationFor(token),
         params,
         voiceEnablement,
         tools,
@@ -2057,8 +2183,126 @@ class HamsaVoiceAgent extends EventEmitter {
       return `Token ${this.apiKey}`;
     }
     throw new Error(
-      'Cannot start a call: no API key and no callToken. Pass an API key to the constructor, or a callToken to start().'
+      'Cannot start a call: no key and no callToken. Pass a publicKey to the constructor, new HamsaVoiceAgent({ publicKey }), or a callToken to start().'
     );
+  }
+
+  /**
+   * The call token this call starts with: the one given, the one the given
+   * function returns (called now, so it is fresh), or one minted with the
+   * public key. Undefined when there is none and an API key starts the call.
+   */
+  async #resolveCallToken(options: {
+    agentId: string;
+    callToken?: StartOptions['callToken'];
+    isChatOnly: boolean;
+    callerKey?: string;
+    versionRef?: string;
+    environmentId?: string;
+  }): Promise<string | undefined> {
+    const {
+      agentId,
+      callToken,
+      isChatOnly,
+      callerKey,
+      versionRef,
+      environmentId,
+    } = options;
+    if (typeof callToken === 'function') {
+      let token: unknown;
+      try {
+        token = await callToken();
+      } catch (error) {
+        throw new Error(
+          `Cannot start a call: the callToken function failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+      if (typeof token !== 'string' || !token) {
+        throw new Error(
+          'Cannot start a call: the callToken function returned no token. It should resolve to the callToken your server minted.'
+        );
+      }
+      return token;
+    }
+    if (callToken) {
+      return callToken;
+    }
+    if (!this.publicKey) {
+      return;
+    }
+    // The key is the environment: nothing the page says can move it.
+    if (versionRef || environmentId) {
+      throw new HamsaApiError(
+        'A public key always runs what its own environment runs, so versionRef and environmentId cannot be used with it. To choose a version or an environment, mint the call token on your server with a secret key.',
+        'PublicKeyFixedEnvironment'
+      );
+    }
+    return await this.#mintWithPublicKey({ agentId, isChatOnly, callerKey });
+  }
+
+  /**
+   * Mints a call token with the public key: for the key's environment, this
+   * agent, and (with `callerKey`) the same side of an A/B test every time.
+   */
+  async #mintWithPublicKey(options: {
+    agentId: string;
+    isChatOnly: boolean;
+    callerKey?: string;
+  }): Promise<string> {
+    const { agentId, isChatOnly, callerKey } = options;
+    this.logger.log('Minting a call token with the public key', {
+      source: 'HamsaVoiceAgent',
+      error: { agentId, isChatOnly },
+    });
+    const response = await fetch(`${this.API_URL}/v1/voice-agents/call-token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${this.publicKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        voiceAgentId: agentId,
+        isChatOnly,
+        ...(callerKey ? { callerKey } : {}),
+      }),
+    });
+    const text = await response.text();
+    let body: {
+      message?: string;
+      messageKey?: string;
+      params?: Record<string, unknown>;
+      data?: { callToken?: string };
+    } = {};
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // Not JSON: the status says what happened.
+    }
+    if (!response.ok) {
+      const retryAfter = Number(response.headers?.get?.('Retry-After'));
+      throw new HamsaApiError(
+        mintRefusal(body.messageKey, body.params, retryAfter) ??
+          body.message ??
+          `Could not start the call (${response.status})`,
+        body.messageKey,
+        {
+          status: response.status,
+          params: body.params,
+          retryAfter: Number.isFinite(retryAfter) ? retryAfter : undefined,
+        }
+      );
+    }
+    const token = body.data?.callToken;
+    if (!token) {
+      throw new HamsaApiError(
+        'The call token response had no callToken.',
+        undefined,
+        { status: response.status }
+      );
+    }
+    return token;
   }
 
   async #initializeLiveKitConversation(options: {
