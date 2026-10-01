@@ -2292,7 +2292,10 @@ class HamsaVoiceAgent extends EventEmitter {
       // Not JSON: the status says what happened.
     }
     if (!response.ok) {
-      const retryAfter = Number(response.headers?.get?.('Retry-After'));
+      // No header (or one the browser may not read, cross-origin) is unknown,
+      // not 0: Number(null) would tell the page to retry at once.
+      const retryHeader = response.headers?.get?.('Retry-After');
+      const retryAfter = retryHeader ? Number(retryHeader) : Number.NaN;
       throw new HamsaApiError(
         mintRefusal(body.messageKey, body.params, retryAfter) ??
           body.message ??
