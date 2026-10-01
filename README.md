@@ -20,11 +20,13 @@ First, import the package in your code:
 import { HamsaVoiceAgent } from "@hamsa-ai/voice-agents-sdk";
 ```
 
-Initialize the SDK with your API key:
+Initialize the SDK with a public key (`pk_…`) from the API keys page of the Hamsa dashboard:
 
 ```javascript
-const agent = new HamsaVoiceAgent(API_KEY);
+const agent = new HamsaVoiceAgent({ publicKey: "pk_..." });
 ```
+
+A public key is made to sit in a web page or an app. To start calls through your own server instead, see [secret keys](#starting-calls-through-your-server-secret-keys). Using an API key from before public keys? See [Moving from an API key](#moving-from-an-api-key).
 
 ### Using via CDN
 
@@ -37,7 +39,7 @@ Include the script from a CDN:
 Then, you can initialize the agent like this:
 
 ```javascript
-const agent = new HamsaVoiceAgent("YOUR_API_KEY");
+const agent = new HamsaVoiceAgent({ publicKey: "pk_..." });
 
 agent.on("callStarted", ({ jobId }) => {
   console.log("Conversation has started! Job ID:", jobId);
@@ -135,7 +137,7 @@ agent.on("error", (error) => {
 });
 ```
 
-An existing API key passed as `new HamsaVoiceAgent(apiKey)` keeps working as before.
+Already using an API key? It keeps working; see [Moving from an API key](#moving-from-an-api-key).
 
 ### Keeping a caller on one version during an A/B test
 
@@ -182,7 +184,7 @@ greeting) as they stream in.
 Start a chat-only session by passing `isChatOnly: true` to `start()`:
 
 ```javascript
-const agent = new HamsaVoiceAgent(API_KEY);
+const agent = new HamsaVoiceAgent({ publicKey: "pk_..." });
 
 // Receive the agent's chat replies (streaming-aware)
 agent.on('chatMessageReceived', (message) => {
@@ -924,7 +926,8 @@ agent.on("customEvent", (eventType, eventData, metadata) => {
 The SDK accepts optional configuration parameters:
 
 ```javascript
-const agent = new HamsaVoiceAgent("YOUR_API_KEY", {
+const agent = new HamsaVoiceAgent({
+  publicKey: "pk_...",
   API_URL: "https://api.tryhamsa.com", // API endpoint (default)
 });
 ```
@@ -963,6 +966,34 @@ agent.start({
 
 ## Migration from Previous Versions
 
+### Moving from an API key
+
+An API key passed as `new HamsaVoiceAgent(API_KEY)` keeps working: its calls reach what your agent runs in prod, as before. Move when you can. Anyone who opens your page can read a key in it, and an API key can do much more than start calls. A public key can only start calls, in the one environment it was made for.
+
+1. On the API keys page of the Hamsa dashboard, create a public key for prod, for your live site. You can limit it to some agents, and to your domains.
+2. Update the SDK: public keys need 0.6.4-beta.3 or later.
+3. Pass the key as `publicKey`. Options you already pass go in the same object:
+
+   ```javascript
+   // Before
+   const agent = new HamsaVoiceAgent(API_KEY, { region: "uae" });
+
+   // After
+   const agent = new HamsaVoiceAgent({ publicKey: "pk_...", region: "uae" });
+   ```
+
+   `start()` and everything after it stay the same.
+
+4. Once your site runs on the public key, delete the API key in the dashboard if nothing else uses it.
+
+What works differently:
+
+- **Staging and dev.** A public key reaches only its own environment. Give your staging site a staging key to try a version there before prod.
+- **Choosing a version.** A page cannot pass `versionRef` or `environmentId` with any key. To choose per call, mint call tokens on your server with a [secret key](#starting-calls-through-your-server-secret-keys).
+- **`getJobDetails()`** still needs an API key, so it belongs on your server.
+
+### Older versions of the SDK
+
 If you're upgrading from a previous version, see the [Migration Guide](./MIGRATION_GUIDE.md) for detailed instructions. Connection details are now automatically managed and no longer need to be configured.
 
 ## Browser Compatibility
@@ -991,7 +1022,7 @@ import {
 } from "@hamsa-ai/voice-agents-sdk";
 
 // All analytics methods return strongly typed data
-const agent = new HamsaVoiceAgent("API_KEY");
+const agent = new HamsaVoiceAgent({ publicKey: "pk_..." });
 
 // TypeScript will provide full autocomplete and type checking for all methods
 const connectionStats = agent.getConnectionStats(); // ConnectionStatsResult | null
