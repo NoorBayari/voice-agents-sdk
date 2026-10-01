@@ -129,12 +129,16 @@ Refusals arrive on the `error` event as a `HamsaApiError` with a `messageKey`, t
 | `ApiKeyRateLimited` | Too many calls with this key in a minute; `retryAfter` says how many seconds to wait. |
 | `KeyRotated` | The key value was replaced; use the current one. |
 | `PublicKeyFixedEnvironment` | `versionRef` or `environmentId` was passed with a public key. |
+| `CallTokenInvalid` | The call token was already used, or is older than about 30 seconds; get a new one for each call. |
+| `CallTokenRequired` | An API key asked for a version or an environment; use a public key, or a token from your server. |
 
 ```javascript
 agent.on("error", (error) => {
   if (error.messageKey === "ApiKeyRateLimited") retryIn(error.retryAfter);
 });
 ```
+
+With no `error` listener, `start()` rejects with the same error instead, so a `try` around `await agent.start(...)` catches it.
 
 Already using an API key? It keeps working; see [Moving from an API key](#moving-from-an-api-key).
 

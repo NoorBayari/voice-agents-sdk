@@ -87,8 +87,9 @@ class HamsaApiError extends Error {
 const MAX_CALLER_KEY_LENGTH = 200;
 
 /**
- * What a refused public-key mint means, in a sentence that says what to do.
- * The API's own message is kept for anything not listed here.
+ * What a refused start means (the public-key mint, or the call start that
+ * redeems a token), in a sentence that says what to do. The API's own
+ * message is kept for anything not listed here.
  */
 function mintRefusal(
   messageKey: string | undefined,
@@ -112,6 +113,10 @@ function mintRefusal(
       return 'A public key always runs what its own environment runs, so versionRef and environmentId cannot be used with it.';
     case 'CallTokenSessionOnly':
       return 'This key cannot start calls from a page. Use a public key (pk_…).';
+    case 'CallTokenInvalid':
+      return 'This call token was already used, or has expired: a token lives about 30 seconds and starts one call. Get a new one for each call.';
+    case 'CallTokenRequired':
+      return 'An API key cannot choose a version or an environment. Use a public key, or have your server mint a call token with a secret key.';
     default:
       return;
   }
@@ -265,7 +270,11 @@ type StartOptions = {
    * @example { userName: "John", orderNumber: "12345", userTier: "premium" }
    */
   params?: Record<string, unknown>;
-  /** Whether to enable voice interactions. If false, agent runs in text-only mode */
+  /**
+   * Turns on page tools for this call: the `tools` registered here, which run
+   * in the page (opening a cart, for example) rather than calling an HTTP
+   * endpoint. A voice call does not need it.
+   */
   voiceEnablement?: boolean;
   /**
    * Whether the conversation runs in chat-only mode (no audio media).
@@ -1397,7 +1406,7 @@ class HamsaVoiceAgent extends EventEmitter {
    * @param options - Configuration options for the conversation
    * @param options.agentId - Unique identifier of the voice agent (from Hamsa dashboard)
    * @param options.params - Parameters to customize the conversation context
-   * @param options.voiceEnablement - Enable voice interactions (default: false for text-only)
+   * @param options.voiceEnablement - Turn on page tools (`tools` that run in the page); not needed for voice
    * @param options.tools - Client-side tools available to the agent
    *
    * @throws {Error} Authentication failures, network errors, or invalid configuration
@@ -1848,20 +1857,22 @@ class HamsaVoiceAgent extends EventEmitter {
         },
       });
 
+      // HamsaApiError as it is, to keep messageKey; anything else with context.
+      const reported =
+        error instanceof HamsaApiError
+          ? error
+          : new Error(
+              `Failed to start call: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
       if (this.listenerCount('error') > 0) {
-        // Forward HamsaApiError instances directly to preserve messageKey
-        if (error instanceof HamsaApiError) {
-          this.emit('error', error);
-        } else {
-          // For other errors, wrap with context
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          this.emit(
-            'error',
-            new Error(`Failed to start call: ${errorMessage}`)
-          );
-        }
+        this.emit('error', reported);
+        return;
       }
+      // Nobody listens for `error`: without this the call would fail silently,
+      // start() resolving as if it had started.
+      throw reported;
     }
   }
 
@@ -2166,7 +2177,7 @@ class HamsaVoiceAgent extends EventEmitter {
    * @private
    * @param voiceAgentId - The voice agent ID.
    * @param params - Additional parameters.
-   * @param voiceEnablement - Flag to enable voice features.
+   * @param voiceEnablement - Turns on page tools for the call.
    * @param tools - Array of tools/functions to be used.
    * @returns The LiveKit access token or null if failed.
    */
@@ -2382,7 +2393,12 @@ class HamsaVoiceAgent extends EventEmitter {
       const errorJson = JSON.parse(errorText);
       if (errorJson.message) {
         // Return both message and messageKey separately for SDK users
-        throw new HamsaApiError(errorJson.message, errorJson.messageKey);
+        throw new HamsaApiError(
+          mintRefusal(errorJson.messageKey, errorJson.params) ??
+            errorJson.message,
+          errorJson.messageKey,
+          { status: response.status, params: errorJson.params }
+        );
       }
     } catch (jsonError) {
       // If not JSON or no message field, use the raw error text with status info
@@ -2396,7 +2412,9 @@ class HamsaVoiceAgent extends EventEmitter {
       ? `${response.status} ${response.statusText} - ${errorText}`
       : errorText;
 
-    throw new HamsaApiError(errorMessage);
+    throw new HamsaApiError(errorMessage, undefined, {
+      status: response.status,
+    });
   }
 
   /**

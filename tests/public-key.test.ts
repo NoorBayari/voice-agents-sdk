@@ -22,6 +22,7 @@ const NO_TOKEN = /returned no token/;
 const STAYS_ON_SERVER = /must stay on your server/;
 const STARTS_WITH_PK = /starting with pk_/;
 const PASS_AS_PUBLIC_KEY = /pass it as publicKey/;
+const USED_OR_EXPIRED = /already used, or has expired/;
 
 /** Every request the SDK made, as [url, init]. */
 const requests = () =>
@@ -199,6 +200,23 @@ describe('publicKey', () => {
     expect(error.message).toMatch(sentence);
   });
 
+  test('rejects start() with the refusal when the page has no error listener', async () => {
+    serve(
+      refused(HTTP.conflict, {
+        message: 'Environment not deployed',
+        messageKey: 'EnvironmentNotDeployed',
+        params: { environment: 'staging' },
+      })
+    );
+    const agent = new HamsaVoiceAgent({ publicKey: 'pk_test' });
+
+    await expect(agent.start({ agentId: 'agent-1' })).rejects.toMatchObject({
+      name: 'HamsaApiError',
+      messageKey: 'EnvironmentNotDeployed',
+      status: HTTP.conflict,
+    });
+  });
+
   test("keeps the API's own message for a refusal it does not know", async () => {
     serve(
       refused(HTTP.badRequest, {
@@ -263,6 +281,40 @@ describe('callToken as a function', () => {
 
     expect(requests()).toHaveLength(0);
     expect(error?.message).toMatch(FUNCTION_FAILED);
+  });
+
+  test('a spent token refused at the call start keeps its status, in words', async () => {
+    (global.fetch as any).mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith('/room/participant-token')
+          ? refused(HTTP.unauthorized, {
+              message: 'Invalid call token',
+              messageKey: 'CallTokenInvalid',
+            })
+          : ok({ liveKitAccessToken: 'mock-token', jobId: 'job-123' })
+      )
+    );
+    const agent = new HamsaVoiceAgent({});
+    const error = (await startCatching(agent, {
+      agentId: 'agent-1',
+      callToken: 'ct_spent',
+    })) as HamsaApiError;
+
+    expect(error).toBeInstanceOf(HamsaApiError);
+    expect(error.messageKey).toBe('CallTokenInvalid');
+    expect(error.status).toBe(HTTP.unauthorized);
+    expect(error.message).toMatch(USED_OR_EXPIRED);
+  });
+
+  test('without an error listener, a failing function rejects start()', async () => {
+    const agent = new HamsaVoiceAgent({});
+    await expect(
+      agent.start({
+        agentId: 'agent-1',
+        callToken: () => Promise.reject(new Error('server down')),
+      })
+    ).rejects.toThrow(FUNCTION_FAILED);
+    expect(requests()).toHaveLength(0);
   });
 
   test('a function that returns nothing stops the start', async () => {
