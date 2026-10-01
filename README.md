@@ -73,22 +73,69 @@ agent.start({
 
 When creating an agent, you can add parameters to your pre-defined values. For example, you can set your Greeting Message to: "Hello {{name}}, how can I help you today?" and pass the "name" as a parameter to use the correct name of the user.
 
-### Starting a call with a call token
+### Starting calls from your website or app: public keys
 
-A call can start with a short-lived call token instead of an API key, so the page holds no key at all. A token is minted server-side, already knows which agent, version and environment it runs, lives about 30 seconds and starts one call. It is sent as `Authorization: CallToken <token>`.
+Use a **public key** (`pk_…`) from the API keys page of the Hamsa dashboard. It is safe in a page or an app: it can only start calls, and only in the environment it was made for (dev, staging or prod), running what that environment runs with its values. Give the SDK the key and nothing else; `start()` gets a short-lived call token with it and starts the call:
 
 ```javascript
-const agent = new HamsaVoiceAgent({ region: "eu" }); // no API key
+const agent = new HamsaVoiceAgent({ publicKey: "pk_..." });
+
+agent.start({ agentId: YOUR_AGENT_ID });
+```
+
+Use the staging key on your staging site and the prod key in production. A public key cannot choose a version or an environment (`versionRef` and `environmentId` are refused with it); for that, use a secret key.
+
+### Starting calls through your server: secret keys
+
+A **secret key** (`sk_…`) stays on your server, never in a page (the SDK refuses one in a browser). Your server mints a call token for each call, and the page gives the SDK a function that fetches it. The SDK calls the function as the call starts, so the token (which lives about 30 seconds and starts one call) is fresh:
+
+```javascript
+// Your server, with the secret key
+app.post("/hamsa/call-token", async (req, res) => {
+  const reply = await fetch("https://api.tryhamsa.com/v1/voice-agents/call-token", {
+    method: "POST",
+    headers: {
+      Authorization: `Token ${process.env.HAMSA_SECRET_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ projectId: "YOUR_PROJECT_ID", voiceAgentId: "YOUR_AGENT_ID" }),
+  });
+  res.json((await reply.json()).data);
+});
+
+// Your page, holding no key
+const agent = new HamsaVoiceAgent();
 
 agent.start({
   agentId: YOUR_AGENT_ID,
-  callToken, // minted by your server just before the call
+  callToken: () =>
+    fetch("/hamsa/call-token", { method: "POST" })
+      .then((r) => r.json())
+      .then((d) => d.callToken),
 });
 ```
 
-With a token, `versionRef` and `environmentId` are not sent: the token decides them. `getJobDetails()` needs an API key, since a token is spent starting the call.
+Your server decides what the call runs: add `versionRef` (a version id, or `"draft"`) or `environmentId` to the mint. `callToken` also takes the token itself, for a page that already has one. With a token, `versionRef` and `environmentId` are not sent from the page: the token decides them. `getJobDetails()` needs an API key, since a token is spent starting the call.
 
-Today tokens are minted for signed-in users of the Hamsa dashboard. Minting from your own server arrives with secret keys.
+### When a call cannot start
+
+Refusals arrive on the `error` event as a `HamsaApiError` with a `messageKey`, the HTTP `status`, the API's `params` and a sentence that says what to do:
+
+| `messageKey` | What it means |
+| --- | --- |
+| `EnvironmentNotDeployed` | The key's environment runs nothing for this agent yet (`params.environment`). |
+| `KeyNotForAgent` | The key is limited to other agents. |
+| `ApiKeyRateLimited` | Too many calls with this key in a minute; `retryAfter` says how many seconds to wait. |
+| `KeyRotated` | The key value was replaced; use the current one. |
+| `PublicKeyFixedEnvironment` | `versionRef` or `environmentId` was passed with a public key. |
+
+```javascript
+agent.on("error", (error) => {
+  if (error.messageKey === "ApiKeyRateLimited") retryIn(error.retryAfter);
+});
+```
+
+An existing API key passed as `new HamsaVoiceAgent(apiKey)` keeps working as before.
 
 ### Keeping a caller on one version during an A/B test
 
