@@ -116,7 +116,9 @@ describe('callToken', () => {
 
     expect(requests()).toHaveLength(0);
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(String(onError.mock.calls[0][0].message)).toMatch(MENTIONS_CALL_TOKEN);
+    expect(String(onError.mock.calls[0][0].message)).toMatch(
+      MENTIONS_CALL_TOKEN
+    );
   });
 
   test('keeps the config when it is passed first', () => {
