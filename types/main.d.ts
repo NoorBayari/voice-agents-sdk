@@ -162,7 +162,11 @@ type StartOptions = {
      * @example { userName: "John", orderNumber: "12345", userTier: "premium" }
      */
     params?: Record<string, unknown>;
-    /** Whether to enable voice interactions. If false, agent runs in text-only mode */
+    /**
+     * Turns on page tools for this call: the `tools` registered here, which run
+     * in the page (opening a cart, for example) rather than calling an HTTP
+     * endpoint. A voice call does not need it.
+     */
     voiceEnablement?: boolean;
     /**
      * Whether the conversation runs in chat-only mode (no audio media).
@@ -1007,7 +1011,7 @@ declare class HamsaVoiceAgent extends EventEmitter {
      * @param options - Configuration options for the conversation
      * @param options.agentId - Unique identifier of the voice agent (from Hamsa dashboard)
      * @param options.params - Parameters to customize the conversation context
-     * @param options.voiceEnablement - Enable voice interactions (default: false for text-only)
+     * @param options.voiceEnablement - Turn on page tools (`tools` that run in the page); not needed for voice
      * @param options.tools - Client-side tools available to the agent
      *
      * @throws {Error} Authentication failures, network errors, or invalid configuration

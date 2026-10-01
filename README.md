@@ -36,10 +36,10 @@ Include the script from a CDN:
 <script src="https://unpkg.com/@hamsa-ai/voice-agents-sdk@LATEST_VERSION/dist/index.umd.js"></script>
 ```
 
-Then, you can initialize the agent like this:
+The script puts the SDK on `window.HamsaVoiceAgent`, with the class inside it as `HamsaVoiceAgent.HamsaVoiceAgent` (and the error class as `HamsaVoiceAgent.HamsaApiError`):
 
 ```javascript
-const agent = new HamsaVoiceAgent({ publicKey: "pk_..." });
+const agent = new HamsaVoiceAgent.HamsaVoiceAgent({ publicKey: "pk_..." });
 
 agent.on("callStarted", ({ jobId }) => {
   console.log("Conversation has started! Job ID:", jobId);
@@ -62,7 +62,6 @@ agent.start({
     param1: "NAME",
     param2: "NAME2",
   },
-  voiceEnablement: true,
   userId: "user-123", // Optional user tracking
   preferHeadphonesForIosDevices: true, // iOS audio optimization
   connectionDelay: {
@@ -130,12 +129,16 @@ Refusals arrive on the `error` event as a `HamsaApiError` with a `messageKey`, t
 | `ApiKeyRateLimited` | Too many calls with this key in a minute; `retryAfter` says how many seconds to wait. |
 | `KeyRotated` | The key value was replaced; use the current one. |
 | `PublicKeyFixedEnvironment` | `versionRef` or `environmentId` was passed with a public key. |
+| `CallTokenInvalid` | The call token was already used, or is older than about 30 seconds; get a new one for each call. |
+| `CallTokenRequired` | An API key asked for a version or an environment; use a public key, or a token from your server. |
 
 ```javascript
 agent.on("error", (error) => {
   if (error.messageKey === "ApiKeyRateLimited") retryIn(error.retryAfter);
 });
 ```
+
+With no `error` listener, `start()` rejects with the same error instead, so a `try` around `await agent.start(...)` catches it.
 
 Already using an API key? It keeps working; see [Moving from an API key](#moving-from-an-api-key).
 
@@ -342,7 +345,6 @@ The easiest way - just pass a callback to `start()`:
 // Dead simple - captures agent audio automatically
 await agent.start({
   agentId: 'agent-123',
-  voiceEnablement: true,
   onAudioData: (audioData) => {
     // Send to third-party service
     thirdPartyWebSocket.send(audioData);
@@ -364,7 +366,6 @@ Need more control? Use `captureAudio` options:
 ```javascript
 await agent.start({
   agentId: 'agent-123',
-  voiceEnablement: true,
   captureAudio: {
     source: 'both',       // Capture both agent and user
     format: 'pcm-f32',    // Raw PCM for processing
@@ -387,8 +388,7 @@ For advanced users who need runtime control:
 ```javascript
 // Start without capture
 await agent.start({
-  agentId: 'agent-123',
-  voiceEnablement: true
+  agentId: 'agent-123'
 });
 
 // Enable capture later, conditionally
@@ -964,6 +964,8 @@ agent.start({
 });
 ```
 
+`voiceEnablement: true` turns on these page tools for the call: tools that run in the page (opening the cart, for example) rather than calling an HTTP endpoint. A voice call does not need it; leave it out when you register no tools.
+
 ## Migration from Previous Versions
 
 ### Moving from an API key
@@ -1060,7 +1062,7 @@ agent.enableAudioCapture({
 // Strongly typed start options with all advanced features
 await agent.start({
   agentId: "agent-id",
-  voiceEnablement: true,
+  voiceEnablement: true, // only with page tools (tools: [...])
   userId: "user-123",
   params: {
     userName: "John Doe",
