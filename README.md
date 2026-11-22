@@ -53,7 +53,7 @@ Make sure to replace `LATEST_VERSION` with the actual latest version number.
 
 ## Start a Conversation with an Existing Agent
 
-Start a conversation with an existing agent by calling the "start" function. You can create and manage agents in our Dashboard or using our API (see: <https://docs.tryhamsa.com>):
+Start a conversation with an existing agent by calling the "start" function. You can create and manage agents in our Dashboard or using our API (see the [Web SDK docs](https://docs.tryhamsa.com/developers/sdks/voice-agents-web-sdk)):
 
 ```javascript
 agent.start({
@@ -61,13 +61,6 @@ agent.start({
   params: {
     param1: "NAME",
     param2: "NAME2",
-  },
-  userId: "user-123", // Optional user tracking
-  preferHeadphonesForIosDevices: true, // iOS audio optimization
-  connectionDelay: {
-    android: 3000, // 3 second delay for Android
-    ios: 0,
-    default: 0,
   },
 });
 ```
@@ -99,7 +92,7 @@ app.post("/hamsa/call-token", async (req, res) => {
       Authorization: `Token ${process.env.HAMSA_SECRET_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ projectId: "YOUR_PROJECT_ID", voiceAgentId: "YOUR_AGENT_ID" }),
+    body: JSON.stringify({ voiceAgentId: "YOUR_AGENT_ID" }), // the project comes from the key
   });
   res.json((await reply.json()).data);
 });
@@ -129,6 +122,7 @@ Refusals arrive on the `error` event as a `HamsaApiError` with a `messageKey`, t
 | `ApiKeyRateLimited` | Too many calls with this key in a minute; `retryAfter` says how many seconds to wait. |
 | `KeyRotated` | The key value was replaced; use the current one. |
 | `PublicKeyFixedEnvironment` | `versionRef` or `environmentId` was passed with a public key. |
+| `CallTokenSessionOnly` | This key cannot start calls from a page; use a public key. |
 | `CallTokenInvalid` | The call token was already used, or is older than about 30 seconds; get a new one for each call. |
 | `CallTokenRequired` | An API key asked for a version or an environment; use a public key, or a token from your server. |
 
@@ -530,29 +524,9 @@ agent.enableAudioCapture(options);
 
 ## Advanced Configuration Options
 
-### Platform-Specific Optimizations
+### Options that have no effect
 
-```javascript
-agent.start({
-  agentId: "your-agent-id",
-  
-  // Optimize audio for iOS devices
-  preferHeadphonesForIosDevices: true,
-  
-  // Platform-specific delays to prevent audio cutoff
-  connectionDelay: {
-    android: 3000, // Android needs longer delay for audio mode switching
-    ios: 500,      // Shorter delay for iOS
-    default: 1000  // Default for other platforms
-  },
-  
-  // Disable wake lock for battery optimization
-  disableWakeLock: false,
-  
-  // User tracking
-  userId: "customer-12345"
-});
-```
+`start()` still accepts `userId`, `preferHeadphonesForIosDevices`, `connectionDelay` and `disableWakeLock`, so older code keeps working, but they do nothing. The screen wake lock is held for every call and released while the call is paused.
 
 ## Job/Call ID Tracking
 
@@ -594,7 +568,8 @@ agent.on("transcriptionReceived", (text) => {
   saveTranscript(jobId, text);
 });
 
-// Check completion status later
+// Check completion status later (needs an API key: with a public key or a
+// call token, read the call from your server or use the agent's webhook)
 agent.on("callEnded", async () => {
   const jobId = agent.getJobId();
   if (jobId) {
@@ -665,6 +640,11 @@ agent.on("transcriptionReceived", (text) => {
 agent.on("answerReceived", (text) => {
   console.log("Agent answer received", text);
 });
+// Both fire for partial text too. For a transcript UI, use messageReceived:
+// { id, role, text, isFinal, timestamp }, with the same id while a line grows
+agent.on("messageReceived", (message) => {
+  console.log("Message", message);
+});
 // Chat-only sessions: dedicated chat event (see "Chat (Text) Conversations")
 agent.on("chatMessageReceived", (message) => {
   console.log("Chat message received", message); // { id, role, text, isFinal, timestamp }
@@ -692,7 +672,7 @@ agent.on("connectionQualityChanged", ({ quality, participant, metrics }) => {
   console.log(`Connection quality: ${quality}`, metrics);
 });
 
-// Periodic analytics updates (every second during calls)
+// Periodic analytics updates (every 5 seconds during calls)
 agent.on("analyticsUpdated", (analytics) => {
   console.log("Call analytics:", analytics);
   // Contains: connectionStats, audioMetrics, performanceMetrics, etc.
@@ -725,10 +705,9 @@ agent.on("reconnected", () => {
   console.log("Successfully reconnected");
 });
 
-// Custom events from agents
+// Data messages from the agent other than answers and transcriptions
 agent.on("customEvent", (eventType, eventData, metadata) => {
   console.log(`Custom event: ${eventType}`, eventData);
-  // Examples: flow_navigation, tool_execution, agent_state_change
 });
 ```
 
@@ -880,44 +859,13 @@ agent.on("callStarted", () => {
 
 ### Custom Event Tracking
 
-Track custom events from your voice agents:
+`customEvent` fires for each data message from the agent that isn't an answer or a transcription. `eventType` is the message's `event` field, `eventData` its `content` or `data` (or the whole message), and `metadata` is `{ timestamp, participant, rawMessage }`. `dataReceived` gets every data message, parsed from JSON, with the sender's identity.
+
+Hamsa agents send their call logs as data messages (`{ type, category, message, payload, timestamp }`, with no `event` field), so these fire during most calls. Their content isn't a stable interface: don't build on it.
 
 ```javascript
-agent.on("customEvent", (eventType, eventData, metadata) => {
-  switch (eventType) {
-    case "flow_navigation":
-      console.log("Agent navigated:", eventData.from, "->", eventData.to);
-      // Track conversation flow
-      break;
-
-    case "tool_execution":
-      console.log(
-        "Tool called:",
-        eventData.toolName,
-        "Result:",
-        eventData.success
-      );
-      // Monitor tool usage
-      break;
-
-    case "agent_state_change":
-      console.log("Agent state:", eventData.state);
-      // Track agent behavior
-      break;
-
-    case "user_intent_detected":
-      console.log(
-        "User intent:",
-        eventData.intent,
-        "Confidence:",
-        eventData.confidence
-      );
-      // Analyze user intent
-      break;
-
-    default:
-      console.log("Custom event:", eventType, eventData);
-  }
+agent.on("dataReceived", (message, participant) => {
+  console.log("Data from", participant, message);
 });
 ```
 
@@ -1020,7 +968,6 @@ import {
   CallAnalyticsResult,
   CallStartedData,
   ParticipantData,
-  CustomEventMetadata,
 } from "@hamsa-ai/voice-agents-sdk";
 
 // All analytics methods return strongly typed data
@@ -1063,18 +1010,11 @@ agent.enableAudioCapture({
 await agent.start({
   agentId: "agent-id",
   voiceEnablement: true, // only with page tools (tools: [...])
-  userId: "user-123",
   params: {
     userName: "John Doe",
     sessionId: "session-456"
   },
-  preferHeadphonesForIosDevices: true,
-  connectionDelay: {
-    android: 3000,
-    ios: 500,
-    default: 1000
-  },
-  disableWakeLock: false
+  callerKey: "user-123" // keeps this person on one version during an A/B test
 });
 
 // Strongly typed event handlers
@@ -1112,9 +1052,9 @@ agent.on("agentStateChanged", (state: AgentState) => {
 // Strongly typed custom events
 agent.on(
   "customEvent",
-  (eventType: string, eventData: any, metadata: CustomEventMetadata) => {
-    console.log(metadata.timestamp); // number
-    console.log(metadata.participant); // string
+  (eventType: string, eventData: unknown, metadata?: Record<string, unknown>) => {
+    console.log(metadata?.timestamp); // when the SDK received it
+    console.log(metadata?.participant); // who sent it
   }
 );
 
@@ -1178,27 +1118,17 @@ agent.on("connectionQualityChanged", ({ quality, metrics }) => {
 ```javascript
 const analytics = agent.getCallAnalytics();
 sendToAnalytics({
-  callDuration: analytics.callDuration,
+  callDuration: analytics.performanceMetrics.callDuration,
   audioQuality: analytics.audioMetrics,
   participantCount: analytics.participants.length,
   performance: analytics.performanceMetrics,
 });
 ```
 
-### Conversation Flow Analysis
-
-```javascript
-agent.on("customEvent", (eventType, data) => {
-  if (eventType === "flow_navigation") {
-    trackConversationFlow(data.from, data.to);
-    optimizeAgentResponses(data);
-  }
-});
-```
-
 ## Dependencies
 
-- **livekit-client v2.15.4**: Real-time communication infrastructure
-- **events v3.3.0**: EventEmitter for browser compatibility
+- **livekit-client 2.22.3**: Real-time communication infrastructure
+- **events 3.3.0**: EventEmitter for browser compatibility
+- **jwt-decode 4**: Reads the call's details from its access token
 
 The SDK uses LiveKit's native WebRTC capabilities for high-quality real-time audio communication and comprehensive analytics.
